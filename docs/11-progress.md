@@ -9,7 +9,7 @@ Living status document. Updated when a milestone moves, not on a schedule.
 | Milestone                        | Status         | Notes                                                         |
 | -------------------------------- | -------------- | ------------------------------------------------------------- |
 | M0 — Skeleton and the spine      | ✅ Complete    | Merged — [PR #2](https://github.com/thai-nm/bahoth2nd/pull/2) |
-| M1 — Seats, identity, redaction  | ✅ Complete    | All nine items; D1–D4 closed                                  |
+| M1 — Seats, identity, redaction  | ✅ Complete    | All nine items; D1–D5 closed                                  |
 | M2 — The house                   | ⬜ Not started | The next substantial piece of work                            |
 | M3 — Cards, traits, dice         | ⬜ Not started |                                                               |
 | M4 — The haunt, and five of them | ⬜ Not started |                                                               |
@@ -20,11 +20,12 @@ Living status document. Updated when a milestone moves, not on a schedule.
 
 ## M1 — complete
 
-All nine scope items shipped, and the four defects M0 left behind (D1–D4) are
-closed. The four landed as one PR each, deliberately: each is a small diff with
-its own tests, and the failure each one fixes is stated in its own commit.
+All nine scope items shipped, the four defects M0 left behind (D1–D4) are
+closed, and so is D5, which D4 introduced and review caught. Each landed as one
+PR: a small diff with its own tests, and the failure it fixes stated in its own
+commit.
 
-Two of them were worth more than their size:
+Three of them were worth more than their size:
 
 - **D3** turned up a second bug it did not go looking for. Adding a periodic
   tick meant inert actions could no longer be allowed to bump the version, or
@@ -34,8 +35,10 @@ Two of them were worth more than their size:
   `getLegalActions`. It now injects them on a deterministic fake clock, and a
   companion test asserts the walk really does produce disconnected seats, armed
   clocks, votes, and removals — coverage that claims itself is not coverage.
+- **D4 deadlocked a room** in a case review caught and neither the unit tests
+  nor the widened property walk did. See D5 below.
 
-87 tests, five files.
+88 tests, five files.
 
 ---
 
@@ -121,6 +124,28 @@ _None open._
 
 Kept rather than deleted: each one is a note on a failure mode worth
 recognising again.
+
+### D5 — Two removals on one tick deadlocked the room _(found in review, fixed 2026-08-01)_
+
+`resolveRemovals` chose the next active seat with
+`nextSeatInOrder(state, target)` — the state as it was **before** the tick.
+When one tick carried two removals and the active seat was the second of them,
+the successor was the seat the same tick had just removed. That breaks
+invariant 6c, and `reduce` rejects an action whose result violates an
+invariant, so the whole `TICK` was thrown away — including both removals.
+
+The room then stopped for good. Every subsequent tick rebuilt the same state,
+failed the same check, and was discarded: the turn clock never advanced again
+and neither absent seat was ever removed.
+
+**Why the tests missed it.** Each removal test removes exactly one seat, and
+the property walk ticks often enough that two grace periods rarely expire
+between ticks. Nothing was wrong with either; the case simply sits between them.
+
+**Fixed by** choosing the successor against the tick's own accumulated state
+rather than the state it started from, before the current target leaves
+`turnOrder`. A test now removes the active seat and its immediate successor on
+one tick.
 
 ### D4 — No remove-player vote _(fixed 2026-08-01)_
 
@@ -213,8 +238,8 @@ rather than drift.
 | 3   | Invariant 1 keys off board emptiness, not a phase list                                | "Every living player is on the board once the board exists" stays correct after M2 places tiles; a phase list would have needed editing.                                                                                                                                                             |
 | 4   | Property tests use our own seeded RNG, not fast-check                                 | Same properties, no extra dependency, failures reproducible from a printed seed. Revisit if shrinking becomes worth it.                                                                                                                                                                              |
 | 5   | Vite 8 / vitest 4 / zod 4 / React 19 instead of the versions implied at planning time | Starting fresh, the older majors carried a known dev-server advisory. Current majors audit clean.                                                                                                                                                                                                    |
-| 7   | A removal vote may be cast immediately; only its EFFECT waits for the grace period    | Gating the vote itself would need a clock inside `getLegalActions`, which must stay pure. Voting early and resolving late is the same rule from the player's side, and keeps legality clock-free.                                                                                                    |
 | 6   | The host is the earliest-**joined** connected seat, not the longest-**connected** one | "Longest-connected" needs a clock, and the engine may not read one. Join order is already encoded in the seat id, so this is deterministic and free. It also behaves better: the role returns to the original host when they reconnect instead of drifting to whoever has been online longest since. |
+| 7   | A removal vote may be cast immediately; only its EFFECT waits for the grace period    | Gating the vote itself would need a clock inside `getLegalActions`, which must stay pure. Voting early and resolving late is the same rule from the player's side, and keeps legality clock-free.                                                                                                    |
 
 ---
 
@@ -255,7 +280,7 @@ Rough, for trend only.
 
 |                     | M0                    | M1                    |
 | ------------------- | --------------------- | --------------------- |
-| Tests               | 49                    | 87                    |
+| Tests               | 49                    | 88                    |
 | Packages            | 5                     | 5                     |
 | Haunts implemented  | 0 / 50                | 0 / 50                |
 | Room tiles authored | 0 / 44                | 0 / 44                |

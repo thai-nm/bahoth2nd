@@ -635,6 +635,49 @@ describe('the remove-player vote', () => {
     expect(s.turnOrder).toContain(s.activeSeat!);
   });
 
+  it('carries two removals on one tick without stranding the turn', () => {
+    // The active seat and the seat immediately after it both go, on the same
+    // tick. Choosing the successor against the pre-removal order would hand
+    // the turn to a seat this very tick removed — and because that breaks an
+    // invariant, reduce rejects the whole TICK. Every later tick would then
+    // fail identically: the clock stops and neither seat is ever removed.
+    const g = startedGame({ players: ['Ana', 'Ben', 'Cal', 'Dot', 'Eve'] });
+    const active = g.state.activeSeat!;
+    const following = g.state.turnOrder[1]!;
+
+    let s = g.state;
+    for (const seat of [active, following]) {
+      s = reduce(s, { t: 'DISCONNECT', seat, at: T0 }, content).state;
+    }
+    // `following` is voted on first, so it is the first key in removeVotes and
+    // is resolved first — leaving the active seat's successor already removed.
+    const voters = Object.keys(s.players).filter((v) => v !== active && v !== following);
+    for (const target of [following, active]) {
+      for (const voter of voters.slice(0, 2)) {
+        s = reduce(
+          s,
+          { t: 'VOTE_REMOVE', seat: voter, target, vote: true },
+          content,
+        ).state;
+      }
+    }
+
+    const result = reduce(
+      s,
+      { t: 'TICK', now: T0 + g.state.timers.removeGraceMs },
+      content,
+    );
+    expect(result.error).toBeUndefined();
+
+    s = result.state;
+    expect(s.players[active]?.removed).toBe(true);
+    expect(s.players[following]?.removed).toBe(true);
+    expect(s.turnOrder).toEqual(expect.not.arrayContaining([active, following]));
+    expect(s.activeSeat).not.toBe(active);
+    expect(s.activeSeat).not.toBe(following);
+    expect(s.turnOrder).toContain(s.activeSeat!);
+  });
+
   it('offers a removed seat no actions at all', () => {
     const { state, absent, grace } = gameWithAbsentee();
     let s = state;

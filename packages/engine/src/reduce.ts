@@ -449,6 +449,14 @@ function resolveRemovals(state: GameState, now: number): ReduceResult {
     const removeVotes = { ...next.removeVotes };
     delete removeVotes[target];
 
+    // nextSeatInOrder needs a seat still in the order to walk from, so the
+    // successor is chosen before the removal is applied — but against `next`,
+    // not `state`. A tick that carries two removals at once has already marked
+    // the first one, and walking the original order would hand the turn to a
+    // seat this same tick removed.
+    const wasActive = next.activeSeat === target;
+    const following = wasActive ? nextSeatInOrder(next, target) : null;
+
     // The explorer stays exactly where it is, holding what it holds. It simply
     // stops taking turns (docs/06-networking.md#disconnection-behaviour).
     next = {
@@ -458,13 +466,13 @@ function resolveRemovals(state: GameState, now: number): ReduceResult {
       turnOrder: next.turnOrder.filter((s) => s !== target),
     };
 
-    if (next.activeSeat === target) {
-      // nextSeatInOrder needs a seat still in the order to walk from, so this
-      // is resolved against the pre-removal order.
-      const following = nextSeatInOrder(state, target);
+    if (wasActive) {
       next = {
         ...next,
-        activeSeat: following === target ? (next.turnOrder[0] ?? null) : following,
+        activeSeat:
+          following === null || following === target
+            ? (next.turnOrder[0] ?? null)
+            : following,
         turnDeadline: null,
       };
     }
