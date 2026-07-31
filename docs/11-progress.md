@@ -2,24 +2,43 @@
 
 Living status document. Updated when a milestone moves, not on a schedule.
 
-**Last updated: 2026-08-01** · **Current milestone: M1 (partial)**
+**Last updated: 2026-08-01** · **Current milestone: M2 (next)**
 
 ## Status at a glance
 
 | Milestone                        | Status         | Notes                                                         |
 | -------------------------------- | -------------- | ------------------------------------------------------------- |
 | M0 — Skeleton and the spine      | ✅ Complete    | Merged — [PR #2](https://github.com/thai-nm/bahoth2nd/pull/2) |
-| M1 — Seats, identity, redaction  | 🟡 ~85%        | Eight of nine items done; only the remove-player vote is left |
+| M1 — Seats, identity, redaction  | ✅ Complete    | All nine items; D1–D5 closed                                  |
 | M2 — The house                   | ⬜ Not started | The next substantial piece of work                            |
 | M3 — Cards, traits, dice         | ⬜ Not started |                                                               |
 | M4 — The haunt, and five of them | ⬜ Not started |                                                               |
 | M5 — Polish                      | ⬜ Not started |                                                               |
 | M6 — The remaining 45 haunts     | ⬜ Not started |                                                               |
 
-A caution for anyone reading a status table: M1's _exit criteria_ would mostly
-pass right now, while several of its _scope items_ are untouched. Exit criteria
-were written to be demonstrable, not exhaustive. Check the item list, not the
-demo.
+---
+
+## M1 — complete
+
+All nine scope items shipped, the four defects M0 left behind (D1–D4) are
+closed, and so is D5, which D4 introduced and review caught. Each landed as one
+PR: a small diff with its own tests, and the failure it fixes stated in its own
+commit.
+
+Three of them were worth more than their size:
+
+- **D3** turned up a second bug it did not go looking for. Adding a periodic
+  tick meant inert actions could no longer be allowed to bump the version, or
+  every room's log would grow forever and idle rooms would never be evicted.
+- The property test's random walk **could not reach any of this code**, because
+  disconnects and ticks are server-originated and never appear in
+  `getLegalActions`. It now injects them on a deterministic fake clock, and a
+  companion test asserts the walk really does produce disconnected seats, armed
+  clocks, votes, and removals — coverage that claims itself is not coverage.
+- **D4 deadlocked a room** in a case review caught and neither the unit tests
+  nor the widened property walk did. See D5 below.
+
+88 tests, five files.
 
 ---
 
@@ -76,7 +95,7 @@ Recorded because each one was invisible to the tests that existed at the time.
 
 ---
 
-## M1 — partial
+## M1 — item status
 
 | Item                                                                                   | Status                        |
 | -------------------------------------------------------------------------------------- | ----------------------------- |
@@ -88,7 +107,7 @@ Recorded because each one was invisible to the tests that existed at the time.
 | Trait tracks in state as indices                                                       | ✅ Done                       |
 | Host transfer when the host drops                                                      | ✅ Done                       |
 | Turn timers and the `TICK` action                                                      | ✅ Done                       |
-| Disconnect handling and the remove-player vote                                         | 🟡 Disconnect yes, vote no    |
+| Disconnect handling and the remove-player vote                                         | ✅ Done                       |
 
 ---
 
@@ -97,9 +116,7 @@ Recorded because each one was invisible to the tests that existed at the time.
 Open defects in code that has shipped to a branch. Each one has a milestone by
 which it must be fixed, and a note on why it is not visible yet.
 
-### D4 — No remove-player vote _(M1)_
-
-A seat that never returns cannot be removed from `turnOrder`.
+_None open._
 
 ---
 
@@ -107,6 +124,41 @@ A seat that never returns cannot be removed from `turnOrder`.
 
 Kept rather than deleted: each one is a note on a failure mode worth
 recognising again.
+
+### D5 — Two removals on one tick deadlocked the room _(found in review, fixed 2026-08-01)_
+
+`resolveRemovals` chose the next active seat with
+`nextSeatInOrder(state, target)` — the state as it was **before** the tick.
+When one tick carried two removals and the active seat was the second of them,
+the successor was the seat the same tick had just removed. That breaks
+invariant 6c, and `reduce` rejects an action whose result violates an
+invariant, so the whole `TICK` was thrown away — including both removals.
+
+The room then stopped for good. Every subsequent tick rebuilt the same state,
+failed the same check, and was discarded: the turn clock never advanced again
+and neither absent seat was ever removed.
+
+**Why the tests missed it.** Each removal test removes exactly one seat, and
+the property walk ticks often enough that two grace periods rarely expire
+between ticks. Nothing was wrong with either; the case simply sits between them.
+
+**Fixed by** choosing the successor against the tick's own accumulated state
+rather than the state it started from, before the current target leaves
+`turnOrder`. A test now removes the active seat and its immediate successor on
+one tick.
+
+### D4 — No remove-player vote _(fixed 2026-08-01)_
+
+A seat that never returned could not be removed from `turnOrder`, and in the
+lobby it was worse than a nuisance: every seat needs an explorer before the
+game can start, so one player closing their laptop stranded the room.
+
+**Fixed by** `VOTE_REMOVE`, `GameState.removeVotes`, and
+`PlayerState.removed`. Voting is deliberately **clock-free** so legality stays
+pure — the table may vote the moment somebody drops — and the grace period is
+enforced when the vote _resolves_, inside `TICK`. A removed explorer is not
+dead: the body stays on the board holding its items, it simply stops taking
+turns. Coming back cancels every vote outright rather than banking them.
 
 ### D3 — Turn timers were declared but never read _(fixed 2026-08-01)_
 
@@ -187,6 +239,7 @@ rather than drift.
 | 4   | Property tests use our own seeded RNG, not fast-check                                 | Same properties, no extra dependency, failures reproducible from a printed seed. Revisit if shrinking becomes worth it.                                                                                                                                                                              |
 | 5   | Vite 8 / vitest 4 / zod 4 / React 19 instead of the versions implied at planning time | Starting fresh, the older majors carried a known dev-server advisory. Current majors audit clean.                                                                                                                                                                                                    |
 | 6   | The host is the earliest-**joined** connected seat, not the longest-**connected** one | "Longest-connected" needs a clock, and the engine may not read one. Join order is already encoded in the seat id, so this is deterministic and free. It also behaves better: the role returns to the original host when they reconnect instead of drifting to whoever has been online longest since. |
+| 7   | A removal vote may be cast immediately; only its EFFECT waits for the grace period    | Gating the vote itself would need a clock inside `getLegalActions`, which must stay pure. Voting early and resolving late is the same rule from the player's side, and keeps legality clock-free.                                                                                                    |
 
 ---
 
@@ -211,22 +264,25 @@ Not bugs — real properties of the design that were not obvious when planning.
 
 In order:
 
-1. **Close M1**: D2, D3, D4 — host transfer, the server-side turn timer that
-   issues `TICK`, and the remove-player vote. One PR each.
-2. **Start M2** — the house. 44 tiles as content, the movement graph, discovery
+1. **Start M2** — the house. 44 tiles as content, the movement graph, discovery
    with the rotation prompt, and the board renderer. This is the milestone that
    makes the thing feel like the game, and the largest single content-authoring
-   push so far.
+   push so far. Split it the way M1 was split: content and schemas, then the
+   movement graph, then discovery and the prompt lifecycle, then the renderer —
+   a PR each, rather than one that touches everything.
+2. **Confirm the turn-timer defaults with a real playtest** (roadmap open
+   question 2). Ten minutes and ninety seconds are still guesses; they are now
+   at least guesses that something reads.
 
 ## Metrics
 
 Rough, for trend only.
 
-|                     | M0                    |
-| ------------------- | --------------------- |
-| Tests               | 49                    |
-| Packages            | 5                     |
-| Haunts implemented  | 0 / 50                |
-| Room tiles authored | 0 / 44                |
-| Cards authored      | 0 / ~65               |
-| Characters authored | 12 / 12 (placeholder) |
+|                     | M0                    | M1                    |
+| ------------------- | --------------------- | --------------------- |
+| Tests               | 49                    | 88                    |
+| Packages            | 5                     | 5                     |
+| Haunts implemented  | 0 / 50                | 0 / 50                |
+| Room tiles authored | 0 / 44                | 0 / 44                |
+| Cards authored      | 0 / ~65               | 0 / ~65               |
+| Characters authored | 12 / 12 (placeholder) | 12 / 12 (placeholder) |

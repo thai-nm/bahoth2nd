@@ -74,6 +74,7 @@ export class RoomManager {
     return {
       turnMs: config.turnTimeoutMs,
       disconnectedMs: config.disconnectTimeoutMs,
+      removeGraceMs: config.removeGraceMs,
     };
   }
 
@@ -122,6 +123,17 @@ export class RoomManager {
     const s = room.state;
     const pending = s.pending;
     if (pending && pending.deadline !== null && now >= pending.deadline) return true;
+
+    // A removal vote whose grace period has run out. Checked in every phase:
+    // the lobby has no turn clock, but a seat that never returns can still be
+    // voted out there.
+    for (const target of Object.keys(s.removeVotes)) {
+      const victim = s.players[target];
+      if (!victim || victim.connected || victim.removed) continue;
+      if (victim.disconnectedAt === null) return true; // needs its clock started
+      if (now - victim.disconnectedAt >= s.timers.removeGraceMs) return true;
+    }
+
     if (s.phase !== 'explore' && s.phase !== 'haunt') return s.turnDeadline !== null;
     if (s.activeSeat === null) return false;
     return s.turnDeadline === null || now >= s.turnDeadline;
@@ -351,7 +363,7 @@ export class RoomManager {
         // disagreeing, and the next recovery would produce a different state.
         for (const seatId of Object.keys(room.state.players)) {
           if (room.state.players[seatId]?.connected) {
-            this.apply(room, { t: 'DISCONNECT', seat: seatId });
+            this.apply(room, { t: 'DISCONNECT', seat: seatId, at: Date.now() });
           }
         }
 

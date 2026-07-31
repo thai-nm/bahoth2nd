@@ -31,6 +31,8 @@ export const config = {
   turnTimeoutMs: num('TURN_TIMEOUT_SECONDS', 600) * 1000,
   /** The shorter budget once the active seat has dropped. */
   disconnectTimeoutMs: num('DISCONNECT_TIMEOUT_SECONDS', 90) * 1000,
+  /** How long a seat must be gone before a majority vote can remove it. */
+  removeGraceMs: num('REMOVE_GRACE_SECONDS', 600) * 1000,
   /**
    * How often the server checks rooms for a due deadline. This is the
    * granularity of the turn clock, not its cost: a TICK is only applied to a

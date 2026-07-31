@@ -90,6 +90,12 @@ export const GameActionSchema = z.discriminatedUnion('t', [
     promptId: z.string(),
     answer: z.unknown(),
   }),
+  z.object({
+    t: z.literal('VOTE_REMOVE'),
+    seat: z.string(),
+    target: z.string(),
+    vote: z.boolean(),
+  }),
   z.object({ t: z.literal('CONCEDE'), seat: z.string() }),
 ]);
 

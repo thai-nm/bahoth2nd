@@ -281,12 +281,15 @@ export class Gateway {
     const { room, seat } = conn;
     if (!room || !seat) return;
 
+    const at = Date.now();
     seat.connected = false;
-    seat.disconnectedAt = Date.now();
+    seat.disconnectedAt = at;
     conn.room = null;
     conn.seat = null;
 
-    const result = this.rooms.apply(room, { t: 'DISCONNECT', seat: seat.seatId });
+    // `at` goes into the action, and therefore into the log: it is when the
+    // removal grace period starts counting.
+    const result = this.rooms.apply(room, { t: 'DISCONNECT', seat: seat.seatId, at });
     this.broadcastRoom(room);
     this.broadcastState(room, result.ok ? result.events : []);
   }

@@ -13,6 +13,7 @@ import {
   type CharId,
   type GameAction,
   type GameState,
+  type PlayerState,
   type SeatId,
   type Trait,
 } from '@bahoth/shared';
@@ -42,8 +43,15 @@ function compareSeats(a: SeatId, b: SeatId): number {
  * back rather than drifting to whoever has been online longest since.
  */
 export function getHostSeat(state: GameState): SeatId | null {
-  const seats = Object.keys(state.players).sort(compareSeats);
+  const seats = Object.keys(state.players)
+    .filter((s) => !state.players[s]?.removed)
+    .sort(compareSeats);
   return seats.find((s) => state.players[s]?.connected) ?? seats[0] ?? null;
+}
+
+/** Seats still taking part: everyone the table has not voted out. */
+export function activePlayers(state: GameState): PlayerState[] {
+  return Object.values(state.players).filter((p) => !p.removed);
 }
 
 export function traitValue(
@@ -86,7 +94,8 @@ export function takenColours(
 }
 
 export function canStart(state: GameState): boolean {
-  const players = Object.values(state.players);
+  // A seat voted out in the lobby does not hold the game up.
+  const players = activePlayers(state);
   return (
     state.phase === 'lobby' &&
     players.length >= MIN_PLAYERS &&
@@ -102,6 +111,8 @@ export function getLegalActions(
 ): GameAction[] {
   const player = state.players[seat];
   if (!player) return [];
+  // A seat the table has voted out is a spectator with a body on the board.
+  if (player.removed) return [];
 
   // A pending prompt blocks everything except the seat that must answer it.
   if (state.pending) {
@@ -111,6 +122,17 @@ export function getLegalActions(
   }
 
   const actions: GameAction[] = [];
+
+  // Voting on an absent seat is available in every live phase, including the
+  // lobby, where a seat that never comes back would otherwise block the start.
+  // The vote is clock-free; the grace period is enforced when it resolves.
+  if (state.phase !== 'game_over') {
+    for (const other of Object.values(state.players)) {
+      if (other.seatId === seat || other.connected || other.removed) continue;
+      const voted = state.removeVotes[other.seatId]?.includes(seat) ?? false;
+      actions.push({ t: 'VOTE_REMOVE', seat, target: other.seatId, vote: !voted });
+    }
+  }
 
   switch (state.phase) {
     case 'lobby': {
@@ -173,11 +195,12 @@ export function nextSeatInOrder(state: GameState, from: SeatId): SeatId | null {
   const i = order.indexOf(from);
   if (i === -1) return order[0] ?? null;
 
-  // Skip dead players; if everyone is dead, fall back to the same seat rather
-  // than looping forever.
+  // Skip dead and removed players; if nobody is left, fall back to the same
+  // seat rather than looping forever.
   for (let step = 1; step <= order.length; step++) {
     const candidate = order[(i + step) % order.length];
-    if (candidate && !state.players[candidate]?.isDead) return candidate;
+    const p = candidate ? state.players[candidate] : undefined;
+    if (candidate && p && !p.isDead && !p.removed) return candidate;
   }
   return from;
 }

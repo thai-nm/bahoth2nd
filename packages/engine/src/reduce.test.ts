@@ -469,6 +469,271 @@ describe('the turn clock', () => {
   });
 });
 
+describe('the remove-player vote', () => {
+  const T0 = 1_700_000_000_000;
+
+  /** A started game with `absent` dropped at T0. */
+  function gameWithAbsentee() {
+    const g = startedGame({ players: ['Ana', 'Ben', 'Cal', 'Dot'] });
+    // Pick someone who is not the active seat, so removal and the turn clock
+    // are tested separately rather than in one tangle.
+    const absent = g.state.turnOrder.find((s) => s !== g.state.activeSeat)!;
+    const state = reduce(g.state, { t: 'DISCONNECT', seat: absent, at: T0 }, content);
+    expect(state.error).toBeUndefined();
+    return { state: state.state, absent, grace: g.state.timers.removeGraceMs };
+  }
+
+  it('is offered against an absent seat, and never against a present one', () => {
+    const { state, absent } = gameWithAbsentee();
+    const voter = Object.keys(state.players).find((s) => s !== absent)!;
+
+    const targets = getLegalActions(state, voter, content)
+      .filter((a) => a.t === 'VOTE_REMOVE')
+      .map((a) => a.target);
+    expect(targets).toEqual([absent]);
+  });
+
+  it('refuses a vote against yourself or against someone still here', () => {
+    const { state, absent } = gameWithAbsentee();
+    const present = Object.keys(state.players).find((s) => s !== absent)!;
+
+    expect(
+      reduce(
+        state,
+        { t: 'VOTE_REMOVE', seat: absent, target: absent, vote: true },
+        content,
+      ).error?.code,
+    ).toBe('ILLEGAL_MOVE');
+    expect(
+      reduce(
+        state,
+        { t: 'VOTE_REMOVE', seat: absent, target: present, vote: true },
+        content,
+      ).error?.code,
+    ).toBe('ILLEGAL_MOVE');
+  });
+
+  it('does nothing until the grace period has passed, however many vote', () => {
+    const { state, absent, grace } = gameWithAbsentee();
+    let s = state;
+    for (const voter of Object.keys(s.players)) {
+      if (voter === absent) continue;
+      s = reduce(
+        s,
+        { t: 'VOTE_REMOVE', seat: voter, target: absent, vote: true },
+        content,
+      ).state;
+    }
+    expect(s.removeVotes[absent]).toHaveLength(3);
+
+    // Unanimous, one millisecond short of the grace period.
+    s = reduce(s, { t: 'TICK', now: T0 + grace - 1 }, content).state;
+    expect(s.players[absent]?.removed).toBe(false);
+    expect(s.turnOrder).toContain(absent);
+  });
+
+  it('removes the seat once a majority has voted and the grace has passed', () => {
+    const { state, absent, grace } = gameWithAbsentee();
+    let s = state;
+    const voters = Object.keys(s.players).filter((v) => v !== absent);
+    // Two of three eligible voters: a strict majority.
+    for (const voter of voters.slice(0, 2)) {
+      s = reduce(
+        s,
+        { t: 'VOTE_REMOVE', seat: voter, target: absent, vote: true },
+        content,
+      ).state;
+    }
+
+    const ticked = reduce(s, { t: 'TICK', now: T0 + grace }, content);
+    expect(ticked.error).toBeUndefined();
+    s = ticked.state;
+
+    expect(s.players[absent]?.removed).toBe(true);
+    expect(s.turnOrder).not.toContain(absent);
+    expect(s.removeVotes[absent]).toBeUndefined();
+    // The body stays on the board holding its things — removed is not dead.
+    expect(s.players[absent]?.isDead).toBe(false);
+    expect(s.players[absent]?.charId).toBe(state.players[absent]?.charId);
+    expect(
+      ticked.events.some((e) => e.t === 'log' && /removed by vote/.test(e.text)),
+    ).toBe(true);
+  });
+
+  it('does not remove on a minority', () => {
+    const { state, absent, grace } = gameWithAbsentee();
+    const voter = Object.keys(state.players).find((v) => v !== absent)!;
+    let s = reduce(
+      state,
+      { t: 'VOTE_REMOVE', seat: voter, target: absent, vote: true },
+      content,
+    ).state;
+
+    s = reduce(s, { t: 'TICK', now: T0 + grace }, content).state;
+    expect(s.players[absent]?.removed).toBe(false);
+    expect(s.removeVotes[absent]).toEqual([voter]);
+  });
+
+  it('cancels every vote when the seat comes back', () => {
+    const { state, absent, grace } = gameWithAbsentee();
+    let s = state;
+    for (const voter of Object.keys(s.players)) {
+      if (voter === absent) continue;
+      s = reduce(
+        s,
+        { t: 'VOTE_REMOVE', seat: voter, target: absent, vote: true },
+        content,
+      ).state;
+    }
+
+    s = reduce(s, { t: 'RECONNECT', seat: absent }, content).state;
+    expect(s.removeVotes[absent]).toBeUndefined();
+    expect(s.players[absent]?.disconnectedAt).toBeNull();
+
+    // Dropping again starts the grace period over rather than resuming it.
+    s = reduce(s, { t: 'DISCONNECT', seat: absent, at: T0 + grace }, content).state;
+    s = reduce(s, { t: 'TICK', now: T0 + grace + 1 }, content).state;
+    expect(s.players[absent]?.removed).toBe(false);
+  });
+
+  it('lets a voter withdraw', () => {
+    const { state, absent } = gameWithAbsentee();
+    const voter = Object.keys(state.players).find((v) => v !== absent)!;
+    let s = reduce(
+      state,
+      { t: 'VOTE_REMOVE', seat: voter, target: absent, vote: true },
+      content,
+    ).state;
+    expect(s.removeVotes[absent]).toEqual([voter]);
+
+    s = reduce(
+      s,
+      { t: 'VOTE_REMOVE', seat: voter, target: absent, vote: false },
+      content,
+    ).state;
+    // The key is dropped entirely rather than left as an empty array, so
+    // "is there a vote running?" is a single check.
+    expect(s.removeVotes[absent]).toBeUndefined();
+  });
+
+  it('passes the turn on if the removed seat was the active one', () => {
+    const g = startedGame({ players: ['Ana', 'Ben', 'Cal', 'Dot'] });
+    const absent = g.state.activeSeat!;
+    let s = reduce(g.state, { t: 'DISCONNECT', seat: absent, at: T0 }, content).state;
+    for (const voter of Object.keys(s.players)) {
+      if (voter === absent) continue;
+      s = reduce(
+        s,
+        { t: 'VOTE_REMOVE', seat: voter, target: absent, vote: true },
+        content,
+      ).state;
+    }
+
+    s = reduce(s, { t: 'TICK', now: T0 + g.state.timers.removeGraceMs }, content).state;
+    expect(s.players[absent]?.removed).toBe(true);
+    expect(s.activeSeat).not.toBe(absent);
+    expect(s.turnOrder).toContain(s.activeSeat!);
+  });
+
+  it('carries two removals on one tick without stranding the turn', () => {
+    // The active seat and the seat immediately after it both go, on the same
+    // tick. Choosing the successor against the pre-removal order would hand
+    // the turn to a seat this very tick removed — and because that breaks an
+    // invariant, reduce rejects the whole TICK. Every later tick would then
+    // fail identically: the clock stops and neither seat is ever removed.
+    const g = startedGame({ players: ['Ana', 'Ben', 'Cal', 'Dot', 'Eve'] });
+    const active = g.state.activeSeat!;
+    const following = g.state.turnOrder[1]!;
+
+    let s = g.state;
+    for (const seat of [active, following]) {
+      s = reduce(s, { t: 'DISCONNECT', seat, at: T0 }, content).state;
+    }
+    // `following` is voted on first, so it is the first key in removeVotes and
+    // is resolved first — leaving the active seat's successor already removed.
+    const voters = Object.keys(s.players).filter((v) => v !== active && v !== following);
+    for (const target of [following, active]) {
+      for (const voter of voters.slice(0, 2)) {
+        s = reduce(
+          s,
+          { t: 'VOTE_REMOVE', seat: voter, target, vote: true },
+          content,
+        ).state;
+      }
+    }
+
+    const result = reduce(
+      s,
+      { t: 'TICK', now: T0 + g.state.timers.removeGraceMs },
+      content,
+    );
+    expect(result.error).toBeUndefined();
+
+    s = result.state;
+    expect(s.players[active]?.removed).toBe(true);
+    expect(s.players[following]?.removed).toBe(true);
+    expect(s.turnOrder).toEqual(expect.not.arrayContaining([active, following]));
+    expect(s.activeSeat).not.toBe(active);
+    expect(s.activeSeat).not.toBe(following);
+    expect(s.turnOrder).toContain(s.activeSeat!);
+  });
+
+  it('offers a removed seat no actions at all', () => {
+    const { state, absent, grace } = gameWithAbsentee();
+    let s = state;
+    for (const voter of Object.keys(s.players)) {
+      if (voter === absent) continue;
+      s = reduce(
+        s,
+        { t: 'VOTE_REMOVE', seat: voter, target: absent, vote: true },
+        content,
+      ).state;
+    }
+    s = reduce(s, { t: 'TICK', now: T0 + grace }, content).state;
+    s = reduce(s, { t: 'RECONNECT', seat: absent }, content).state;
+
+    // Even having come back, a removed seat is a spectator.
+    expect(getLegalActions(s, absent, content)).toEqual([]);
+  });
+
+  it('unblocks a lobby held up by a seat that never returned', () => {
+    const chosen = ['seat_0', 'seat_1', 'seat_2'].map((seat, i) => ({
+      t: 'CHOOSE_CHAR' as const,
+      seat,
+      charId: content.characters[i * 2]!.id,
+    }));
+    // Four seats, one of whom leaves before choosing: START_GAME is blocked
+    // because every seat needs an explorer.
+    const g = playGame({
+      players: ['Ana', 'Ben', 'Cal', 'Dot'],
+      actions: [...chosen, { t: 'DISCONNECT', seat: 'seat_3', at: T0 }],
+    });
+    expect(getLegalActions(g.state, 'seat_0', content).map((a) => a.t)).not.toContain(
+      'START_GAME',
+    );
+
+    let s = g.state;
+    for (const voter of ['seat_0', 'seat_1', 'seat_2']) {
+      s = reduce(
+        s,
+        { t: 'VOTE_REMOVE', seat: voter, target: 'seat_3', vote: true },
+        content,
+      ).state;
+    }
+    s = reduce(s, { t: 'TICK', now: T0 + s.timers.removeGraceMs }, content).state;
+
+    expect(s.players['seat_3']?.removed).toBe(true);
+    expect(getLegalActions(s, 'seat_0', content).map((a) => a.t)).toContain('START_GAME');
+
+    const started = reduce(s, { t: 'START_GAME', seat: 'seat_0' }, content);
+    expect(started.error).toBeUndefined();
+    expect(started.state.turnOrder).toEqual(
+      expect.arrayContaining(['seat_0', 'seat_1', 'seat_2']),
+    );
+    expect(started.state.turnOrder).not.toContain('seat_3');
+  });
+});
+
 describe('unimplemented actions', () => {
   it('are rejected cleanly rather than silently ignored', () => {
     const g = startedGame();

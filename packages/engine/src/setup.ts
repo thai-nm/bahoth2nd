@@ -11,6 +11,7 @@ import { makeRng } from './rng.js';
 export const DEFAULT_TIMERS: TurnTimers = {
   turnMs: 10 * 60 * 1000,
   disconnectedMs: 90 * 1000,
+  removeGraceMs: 10 * 60 * 1000,
 };
 
 export interface CreateStateOptions {
@@ -34,6 +35,7 @@ export function createInitialState({
     activeSeat: null,
     round: 0,
     timers,
+    removeVotes: {},
     turnDeadline: null,
     board: {
       placed: {},

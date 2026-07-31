@@ -53,6 +53,10 @@ export function Game() {
 
   const legal = getLegalActions(state, seatId, content);
   const canEndTurn = legal.some((a) => a.t === 'END_TURN');
+  // target -> the vote this seat would cast by clicking (true = for removal).
+  const removeVotes = new Map(
+    legal.filter((a) => a.t === 'VOTE_REMOVE').map((a) => [a.target, a.vote]),
+  );
   const isMyTurn = state.activeSeat === seatId;
   const activeName =
     seats.find((s) => s.seatId === state.activeSeat)?.name ?? state.activeSeat;
@@ -118,6 +122,26 @@ export function Game() {
                     )}
                   </span>
                   {p.isDead && <span className="tag">dead</span>}
+                  {p.removed && <span className="tag">removed</span>}
+                  {removeVotes.has(sid) && (
+                    <button
+                      type="button"
+                      className="btn btn--tiny"
+                      disabled={pending}
+                      onClick={() =>
+                        send({
+                          t: 'VOTE_REMOVE',
+                          seat: seatId,
+                          target: sid,
+                          vote: removeVotes.get(sid)!,
+                        })
+                      }
+                      title="Takes effect once they have been gone long enough"
+                    >
+                      {removeVotes.get(sid) ? 'Vote to remove' : 'Withdraw vote'} (
+                      {state.removeVotes[sid]?.length ?? 0})
+                    </button>
+                  )}
                 </li>
               );
             })}
