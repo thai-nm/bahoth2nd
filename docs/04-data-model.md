@@ -37,7 +37,11 @@ interface GameState {
   phase: Phase;
   players: Record<SeatId, PlayerState>;
   turnOrder: SeatId[];
-  activeSeat: SeatId;
+  activeSeat: SeatId | null; // null in the lobby and after game over
+  round: number;
+  timers: TurnTimers; // fixed at room creation, never read from config later
+  turnDeadline: number | null; // ms epoch; armed by the first TICK of a turn
+  removeVotes: Record<SeatId, SeatId[]>; // target -> seats voting to remove it
   board: BoardState;
   decks: Record<DeckKind, DeckState>;
   omensDrawn: number;
@@ -48,6 +52,28 @@ interface GameState {
   result: GameResult | null;
 }
 ```
+
+### TurnTimers
+
+```ts
+interface TurnTimers {
+  turnMs: number; // budget for a connected player's turn
+  disconnectedMs: number; // the shorter budget once the active seat has dropped
+  removeGraceMs: number; // how long a seat must be gone before votes take effect
+}
+```
+
+The budgets live in state rather than being read from server config at tick
+time, and are recorded in the action log's header alongside the seed. A room
+whose config changed under it would otherwise diverge from its own log on
+replay.
+
+`turnDeadline` is armed by the first `TICK` of a turn, not when the turn
+starts: the engine may not read a clock, so a `TICK` is the only way time
+enters it. A drop or a return by the active seat disarms it, and the next tick
+re-arms it against whichever budget now applies.
+
+`removeVotes` is public — a show of hands at the table, not a secret ballot.
 
 ### Phase
 
@@ -77,10 +103,17 @@ interface PlayerState {
   isTraitor: boolean;
   isDead: boolean;
   connected: boolean;
+  disconnectedAt: number | null; // ms epoch of the drop; the grace period runs from here
+  removed: boolean; // voted out by the table — NOT the same as dead
   hasAttackedThisTurn: boolean;
   flags: Record<string, number | boolean | string>; // haunt scratch space
 }
 ```
+
+`removed` is not `isDead`. A removed explorer stays exactly where it is,
+holding what it holds, and is simply no longer in `turnOrder` — an inert body
+rather than a corpse. Reconnecting does not undo removal, but it does cancel
+every open vote against a seat that has not been removed yet.
 
 `flags` is the pressure valve for haunt-specific per-player bookkeeping ("has
 the key", "is cursed", "turns until transformation"). Haunt content declares
@@ -269,11 +302,20 @@ Asserted in development builds after every reduction (`engine/src/invariants.ts`
 3. No two placed tiles share a `(floor, x, y)`.
 4. Every `CardId` appears exactly once across `draw`, `discard`, and `inPlay`
    for its deck.
-5. All trait indices are integers in `[0, 7]`.
-6. `activeSeat` is in `turnOrder`, and `turnOrder` contains no dead-and-removed
-   seats during the haunt.
-7. If `pending` is set, `pending.seatId` refers to a connected-or-timed-out
-   seat.
+5. All trait indices are integers in `[0, 7]`, **and a living player who has
+   chosen an explorer is never on index 0** — index 0 is the skull. A range
+   check that the wrong value happens to satisfy is not a check; see D1 in
+   [11-progress](11-progress.md#fixed-defects).
+6. `activeSeat` is in `turnOrder`, and there is an `activeSeat` during any
+   phase that has turns.
+   - **6b.** `turnDeadline` is armed only while somebody is actually taking a
+     turn. A deadline left armed in the lobby or after game over would expire
+     against a seat that is no longer active.
+   - **6c.** A removed seat is out of the rotation entirely: never in
+     `turnOrder`, never the `activeSeat`.
+   - **6d.** Votes refer to real seats; nobody votes twice, and nobody votes to
+     remove themselves.
+7. If `pending` is set, `pending.seatId` refers to a real seat.
 
 Invariant failures throw in dev and in tests, and are logged-and-reported in
 production without crashing the room.
