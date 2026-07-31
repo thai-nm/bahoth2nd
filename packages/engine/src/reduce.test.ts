@@ -3,7 +3,7 @@ import { fixtureContent } from '@bahoth/content';
 import { playGame, replay, startedGame } from './testing.js';
 import { reduce } from './reduce.js';
 import { makeSeatId } from './setup.js';
-import { getLegalActions, traitValue } from './selectors.js';
+import { getHostSeat, getLegalActions, traitValue } from './selectors.js';
 import { checkInvariants } from './invariants.js';
 import { TRAITS, type GameAction } from '@bahoth/shared';
 
@@ -108,6 +108,89 @@ describe('lobby', () => {
     });
     expect(g.errors).toEqual([]);
     expect(g.state.players['seat_1']?.charId).toBe(a);
+  });
+});
+
+describe('host transfer', () => {
+  const chosen = ['seat_0', 'seat_1', 'seat_2'].map((seat, i) => ({
+    t: 'CHOOSE_CHAR' as const,
+    seat,
+    charId: content.characters[i * 2]!.id,
+  }));
+
+  it('is the earliest-joined connected seat', () => {
+    const g = playGame({ players: ['Ana', 'Ben', 'Cal'] });
+    expect(getHostSeat(g.state)).toBe('seat_0');
+
+    const dropped = playGame({
+      players: ['Ana', 'Ben', 'Cal'],
+      actions: [{ t: 'DISCONNECT', seat: 'seat_0' }],
+    });
+    expect(getHostSeat(dropped.state)).toBe('seat_1');
+  });
+
+  it('returns to the original host when they reconnect', () => {
+    const g = playGame({
+      players: ['Ana', 'Ben', 'Cal'],
+      actions: [
+        { t: 'DISCONNECT', seat: 'seat_0' },
+        { t: 'RECONNECT', seat: 'seat_0' },
+      ],
+    });
+    expect(getHostSeat(g.state)).toBe('seat_0');
+  });
+
+  it('lets the new host actually start the game', () => {
+    const g = playGame({
+      players: ['Ana', 'Ben', 'Cal'],
+      actions: [...chosen, { t: 'DISCONNECT', seat: 'seat_0' }],
+    });
+    expect(getLegalActions(g.state, 'seat_1', content).map((a) => a.t)).toContain(
+      'START_GAME',
+    );
+
+    const started = reduce(g.state, { t: 'START_GAME', seat: 'seat_1' }, content);
+    expect(started.error).toBeUndefined();
+    expect(started.state.phase).toBe('explore');
+  });
+
+  it('no longer offers START_GAME to a host who has dropped', () => {
+    const g = playGame({
+      players: ['Ana', 'Ben', 'Cal'],
+      actions: [...chosen, { t: 'DISCONNECT', seat: 'seat_0' }],
+    });
+    expect(getLegalActions(g.state, 'seat_0', content).map((a) => a.t)).not.toContain(
+      'START_GAME',
+    );
+  });
+
+  it('narrates the transfer in the log', () => {
+    const g = playGame({
+      players: ['Ana', 'Ben', 'Cal'],
+      actions: [{ t: 'DISCONNECT', seat: 'seat_0' }],
+    });
+    expect(g.events).toContainEqual({ t: 'log', text: 'Ben is now the host' });
+  });
+
+  it('says nothing when the drop does not move the role', () => {
+    const g = playGame({
+      players: ['Ana', 'Ben', 'Cal'],
+      actions: [{ t: 'DISCONNECT', seat: 'seat_2' }],
+    });
+    expect(g.events.filter((e) => e.t === 'log')).toEqual([]);
+  });
+
+  it('falls back to the earliest seat when nobody is connected', () => {
+    // Every seat dropping is exactly what crash recovery produces, and the
+    // room must still name a host rather than returning null.
+    const g = playGame({
+      players: ['Ana', 'Ben', 'Cal'],
+      actions: ['seat_0', 'seat_1', 'seat_2'].map((seat) => ({
+        t: 'DISCONNECT' as const,
+        seat,
+      })),
+    });
+    expect(getHostSeat(g.state)).toBe('seat_0');
   });
 });
 

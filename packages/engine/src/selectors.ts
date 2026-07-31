@@ -18,10 +18,32 @@ import {
 } from '@bahoth/shared';
 import type { Content } from '@bahoth/content';
 
-/** The host is the first seat in join order; ties never happen. */
+/**
+ * Seat ids are `seat_<n>` assigned in join order, so ordering by that number
+ * IS join order. Compared numerically rather than lexically so the ordering
+ * does not silently invert at seat_10 if MAX_PLAYERS ever grows.
+ */
+function compareSeats(a: SeatId, b: SeatId): number {
+  const na = Number(a.slice(a.lastIndexOf('_') + 1));
+  const nb = Number(b.slice(b.lastIndexOf('_') + 1));
+  if (Number.isNaN(na) || Number.isNaN(nb)) return a < b ? -1 : a > b ? 1 : 0;
+  return na - nb;
+}
+
+/**
+ * The host is the earliest-joined seat that is currently connected, falling
+ * back to the earliest-joined seat when nobody is. Without the connection
+ * check a host who drops takes the lobby with them: nobody else can start.
+ *
+ * [06-networking](../../../docs/06-networking.md#disconnection-behaviour) says
+ * "longest-connected", which would need a clock the engine is not allowed to
+ * read. Earliest-joined-among-connected is the deterministic stand-in, and it
+ * behaves better anyway — the role returns to the original host when they come
+ * back rather than drifting to whoever has been online longest since.
+ */
 export function getHostSeat(state: GameState): SeatId | null {
-  const seats = Object.keys(state.players).sort();
-  return seats[0] ?? null;
+  const seats = Object.keys(state.players).sort(compareSeats);
+  return seats.find((s) => state.players[s]?.connected) ?? seats[0] ?? null;
 }
 
 export function traitValue(
