@@ -42,6 +42,12 @@ export interface TurnTimers {
   turnMs: number;
   /** The shorter budget once the active seat has dropped. */
   disconnectedMs: number;
+  /**
+   * How long a seat must be gone before the table's votes to remove it take
+   * effect. Long, because coming back from a dead laptop should be possible
+   * (docs/06-networking.md#disconnection-behaviour).
+   */
+  removeGraceMs: number;
 }
 
 export type FlagValue = number | boolean | string;
@@ -64,6 +70,14 @@ export interface PlayerState {
   isTraitor: boolean;
   isDead: boolean;
   connected: boolean;
+  /** ms epoch of the drop, or null while connected. Written by the server. */
+  disconnectedAt: number | null;
+  /**
+   * Voted out by the table after being gone too long. Not the same as dead:
+   * the explorer stays on the board as an inert body holding its items, it is
+   * simply no longer taking turns.
+   */
+  removed: boolean;
   hasAttackedThisTurn: boolean;
   flags: Flags;
 }
@@ -154,6 +168,11 @@ export interface GameState {
   activeSeat: SeatId | null;
   round: number;
   timers: TurnTimers;
+  /**
+   * Open votes to remove an absent seat, as target -> the seats voting for it.
+   * Public: this is a show of hands at the table, not a secret ballot.
+   */
+  removeVotes: Record<SeatId, SeatId[]>;
   /**
    * ms epoch at which the active seat's turn expires, or null when no turn
    * clock is running. Armed by the first `TICK` of a turn — the engine never

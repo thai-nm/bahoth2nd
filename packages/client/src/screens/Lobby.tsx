@@ -21,6 +21,11 @@ export function Lobby() {
       .map((a) => (a as { charId: string | null }).charId),
   );
   const canStart = legal.some((a) => a.t === 'START_GAME');
+  // A seat that joined and never came back blocks the start, since every seat
+  // needs an explorer. Voting it out is the way past that.
+  const removeVotes = new Map(
+    legal.filter((a) => a.t === 'VOTE_REMOVE').map((a) => [a.target, a.vote]),
+  );
 
   const me = state.players[seatId];
 
@@ -28,6 +33,8 @@ export function Lobby() {
   // only re-sent on join/leave, so its charId goes stale the moment someone
   // picks an explorer, while every snapshot carries the current truth.
   const players = Object.values(state.players);
+  // A removed seat still shows, tagged, but does not count towards the table.
+  const playing = players.filter((p) => !p.removed).length;
   const hostSeat = getHostSeat(state);
 
   return (
@@ -57,7 +64,7 @@ export function Lobby() {
       </header>
 
       <section className="lobby__seats">
-        <h2>Players ({players.length}/6)</h2>
+        <h2>Players ({playing}/6)</h2>
         <ul className="seatlist">
           {players.map((s) => {
             const character = s.charId ? content.charactersById[s.charId] : null;
@@ -69,6 +76,26 @@ export function Lobby() {
                 <span className={s.connected ? 'dot dot--on' : 'dot'} aria-hidden />
                 <span className="seat__name">{s.name}</span>
                 {s.seatId === hostSeat && <span className="seat__host">host</span>}
+                {s.removed && <span className="tag">removed</span>}
+                {removeVotes.has(s.seatId) && (
+                  <button
+                    type="button"
+                    className="btn btn--tiny"
+                    disabled={pending}
+                    onClick={() =>
+                      send({
+                        t: 'VOTE_REMOVE',
+                        seat: seatId,
+                        target: s.seatId,
+                        vote: removeVotes.get(s.seatId)!,
+                      })
+                    }
+                    title="Takes effect once they have been gone long enough"
+                  >
+                    {removeVotes.get(s.seatId) ? 'Vote to remove' : 'Withdraw vote'} (
+                    {state.removeVotes[s.seatId]?.length ?? 0})
+                  </button>
+                )}
                 <span className="seat__char">
                   {character ? (
                     <>

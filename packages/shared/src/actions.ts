@@ -31,11 +31,17 @@ export type GameAction =
   | { t: 'ATTACK'; seat: SeatId; target: TargetRef; trait: Trait }
   | { t: 'ASSIGN_DAMAGE'; seat: SeatId; alloc: Partial<Record<Trait, number>> }
   | { t: 'END_TURN'; seat: SeatId }
+  /** Vote for, or withdraw a vote for, removing a seat that has gone away. */
+  | { t: 'VOTE_REMOVE'; seat: SeatId; target: SeatId; vote: boolean }
   // generic prompt answer
   | { t: 'ANSWER'; seat: SeatId; promptId: string; answer: unknown }
   // server-originated
   | { t: 'TICK'; now: number }
-  | { t: 'DISCONNECT'; seat: SeatId }
+  // `at` is the ms epoch of the drop: the engine cannot read a clock, and the
+  // removal grace period has to be measured from somewhere. Optional because
+  // an action log written before it existed has none — the next TICK starts
+  // the clock in that case rather than leaving the seat unremovable.
+  | { t: 'DISCONNECT'; seat: SeatId; at?: number | undefined }
   | { t: 'RECONNECT'; seat: SeatId }
   | { t: 'CONCEDE'; seat: SeatId };
 

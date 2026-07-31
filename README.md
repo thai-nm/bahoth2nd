@@ -85,6 +85,7 @@ and CI passes without any of it. See
 | `TURN_TIMEOUT_SECONDS`       | `600`                  | Connected-player turn timer            |
 | `DISCONNECT_TIMEOUT_SECONDS` | `90`                   | Disconnected-player turn timer         |
 | `TICK_INTERVAL_MS`           | `1000`                 | Turn-clock granularity                 |
+| `REMOVE_GRACE_SECONDS`       | `600`                  | Absence before a seat can be voted out |
 | `LOG_LEVEL`                  | `info`                 | `debug` \| `info` \| `warn` \| `error` |
 
 Both turn timers are fixed per room when it is created and recorded in its

@@ -23,14 +23,24 @@ interface Walk {
   log: GameAction[];
 }
 
+/** Fixed epoch for the walk's fake clock. Any value; it only has to advance. */
+const WALK_T0 = 1_700_000_000_000;
+
 /**
  * Walk the game by repeatedly picking a uniformly random legal action from a
  * random seat. Seats are joined first so the walk has somewhere to start.
+ *
+ * One in four steps issues a SERVER-originated action instead — disconnect,
+ * reconnect, or a tick on a fake clock that only ever moves forward. Those
+ * never appear in getLegalActions (a client cannot forge them), so without
+ * this the walk could never reach a disconnected seat, an expired turn, or a
+ * removal vote, and the invariant checker would never see any of it.
  */
 function randomWalk(seed: number, steps: number): Walk {
   let rng: RngState = makeRng(seed ^ 0x5eed);
   let state = createInitialState({ seed, content });
   const log: GameAction[] = [];
+  let clock = WALK_T0;
 
   const names = ['Ana', 'Ben', 'Cal', 'Dot', 'Eli', 'Fay'];
   const [playerCount, r0] = nextInt(rng, 4); // 0..3 -> 3..6 players
@@ -52,16 +62,39 @@ function randomWalk(seed: number, steps: number): Walk {
     rng = r1;
     const seat = seats[si]!;
 
-    const legal = getLegalActions(state, seat, content);
-    if (legal.length === 0) continue;
+    // The clock advances by 0-4 minutes a step, so both turn expiry (90s /
+    // 10min) and the removal grace period (10min) are reachable.
+    const [jump, rc] = nextInt(rng, 240);
+    rng = rc;
+    clock += jump * 1000;
 
-    const [ai, r2] = nextInt(rng, legal.length);
+    let action: GameAction;
+    const [roll, r2] = nextInt(rng, 4);
     rng = r2;
-    const action = legal[ai]!;
+    const fromLegal = roll !== 0;
+    if (roll === 0) {
+      const [kind, r3] = nextInt(rng, 3);
+      rng = r3;
+      action =
+        kind === 0
+          ? { t: 'TICK', now: clock }
+          : kind === 1
+            ? { t: 'DISCONNECT', seat, at: clock }
+            : { t: 'RECONNECT', seat };
+    } else {
+      const legal = getLegalActions(state, seat, content);
+      if (legal.length === 0) continue;
+      const [ai, r3] = nextInt(rng, legal.length);
+      rng = r3;
+      action = legal[ai]!;
+    }
 
     const res = reduce(state, action, content);
     if (res.error) {
-      // A legal action must never be rejected. That is itself a bug.
+      // A legal action must never be rejected. That is itself a bug. Server
+      // actions are not offered by getLegalActions, so they are not held to
+      // this — though in practice none of them can fail either.
+      if (!fromLegal) continue;
       throw new Error(
         `seed ${seed} step ${step}: getLegalActions offered ${action.t} but reduce rejected it (${res.error.code}: ${res.error.message})`,
       );
@@ -85,6 +118,30 @@ describe('property: invariants always hold', () => {
     for (let seed = 1; seed <= 25; seed++) {
       expect(() => randomWalk(seed, 500)).not.toThrow();
     }
+  });
+
+  it('actually reaches the states it claims to cover', () => {
+    // A walk that never disconnects anyone would pass every assertion above
+    // while testing none of the disconnect, turn-clock, or removal machinery.
+    // This asserts the generator's reach, so that coverage cannot quietly
+    // disappear when the walk or the legality rules change.
+    let disconnected = 0;
+    let armedClock = 0;
+    let votes = 0;
+    let removals = 0;
+
+    for (let seed = 1; seed <= 25; seed++) {
+      const { state, log } = randomWalk(seed, 500);
+      if (Object.values(state.players).some((p) => !p.connected)) disconnected++;
+      if (state.turnDeadline !== null) armedClock++;
+      if (log.some((a) => a.t === 'VOTE_REMOVE')) votes++;
+      if (Object.values(state.players).some((p) => p.removed)) removals++;
+    }
+
+    expect(disconnected, 'no walk produced a disconnected seat').toBeGreaterThan(0);
+    expect(armedClock, 'no walk armed the turn clock').toBeGreaterThan(0);
+    expect(votes, 'no walk cast a removal vote').toBeGreaterThan(0);
+    expect(removals, 'no walk carried a removal through').toBeGreaterThan(0);
   });
 });
 
