@@ -56,16 +56,18 @@ type GameAction =
   | { t: 'ATTACK'; seat: SeatId; target: TargetRef; trait: Trait }
   | { t: 'ASSIGN_DAMAGE'; seat: SeatId; alloc: Partial<Record<Trait, number>> }
   | { t: 'END_TURN'; seat: SeatId }
+  // seat management
+  | { t: 'VOTE_REMOVE'; seat: SeatId; target: SeatId; vote: boolean }
   // generic prompt answers
   | { t: 'ANSWER'; seat: SeatId; promptId: string; answer: unknown }
   // server-originated
-  | { t: 'TICK'; now: number } // resolves expired prompts
-  | { t: 'DISCONNECT'; seat: SeatId }
+  | { t: 'TICK'; now: number } // the engine's only knowledge of time
+  | { t: 'DISCONNECT'; seat: SeatId; at?: number } // `at` = ms epoch of the drop
   | { t: 'RECONNECT'; seat: SeatId }
   | { t: 'CONCEDE'; seat: SeatId };
 ```
 
-Two design notes:
+Four design notes:
 
 - **`MOVE` vs `MOVE_THROUGH`.** Moving to a known room references its
   `PlacedId`. Moving through an unexplored doorway references a direction,
@@ -73,7 +75,22 @@ Two design notes:
   nullable target and makes discovery an explicit code path.
 - **`TICK` is an action, not a timer callback.** The server sends it; the
   engine stays pure and replay stays deterministic because `now` is recorded
-  in the log.
+  in the log. It does four things, in order: start the grace clock for any seat
+  that dropped without an `at`, apply removals whose votes have carried and
+  whose grace has elapsed, resolve a prompt past its own deadline, then arm or
+  expire the turn clock.
+- **A `TICK` with nothing to do is inert.** It returns the state _by reference_,
+  and `reduce` then declines to bump `version`. This matters because the server
+  logs, broadcasts, and refreshes room liveness on every accepted action: a
+  once-per-second tick that always counted would grow every room's log without
+  bound and keep idle rooms alive forever. The server also checks cheaply
+  whether anything is due before sending a `TICK` at all.
+- **`VOTE_REMOVE` is deliberately clock-free.** Legality must stay pure, so the
+  table may vote the moment a seat drops; the grace period is enforced when the
+  vote _resolves_, inside `TICK`. From a player's side that is the same rule.
+  `at` on `DISCONNECT` is optional because logs written before it existed have
+  none — such a seat has its clock started by the next `TICK` rather than
+  becoming quietly unremovable.
 
 ## 5.3 Events
 
