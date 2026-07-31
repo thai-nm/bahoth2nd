@@ -61,12 +61,17 @@ export function createServer() {
   });
 
   const wss = new WebSocketServer({ server, path: WS_PATH, maxPayload: 64 * 1024 });
-  new Gateway(wss, rooms, content);
+  const gateway = new Gateway(wss, rooms, content);
 
   const evictTimer = setInterval(() => rooms.evictIdle(), 5 * 60 * 1000);
   evictTimer.unref();
 
-  return { server, rooms, content, wss };
+  // The turn clock. Cheap by construction: the sweep only issues a TICK to a
+  // room that has a deadline due.
+  const tickTimer = setInterval(() => gateway.sweepTimers(), config.tickIntervalMs);
+  tickTimer.unref();
+
+  return { server, rooms, content, wss, gateway };
 }
 
 function json(res: http.ServerResponse, status: number, body: unknown): void {

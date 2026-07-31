@@ -25,15 +25,17 @@ interface Harness {
   url: string;
   close: () => Promise<void>;
   rooms: ReturnType<typeof createServer>['rooms'];
+  gateway: ReturnType<typeof createServer>['gateway'];
 }
 
 async function startServer(): Promise<Harness> {
-  const { server, rooms } = createServer();
+  const { server, rooms, gateway } = createServer();
   await new Promise<void>((resolve) => server.listen(0, resolve));
   const { port } = server.address() as AddressInfo;
   return {
     url: `ws://127.0.0.1:${port}/ws`,
     rooms,
+    gateway,
     close: () =>
       new Promise<void>((resolve) => {
         rooms.closeAll();
@@ -345,6 +347,106 @@ describe('host transfer over the wire', () => {
     await hostAgain.next('welcome', (m) => m.seatId === 'seat_0');
     const returned = await ben.next('room', (m) => m.hostSeatId === 'seat_0');
     expect(returned.hostSeatId).toBe('seat_0');
+  });
+});
+
+describe('the turn clock over the wire', () => {
+  /**
+   * The sweep is driven with an explicit `now` rather than by waiting on the
+   * wall clock. It is the same code path the interval calls — isTickDue, then
+   * apply, then broadcast — so nothing is stubbed, and the test does not have
+   * to sleep for a real turn budget.
+   */
+  async function startedRoom() {
+    const host = await connect('Ana');
+    host.send({ t: 'create' });
+    const room = await host.next('room');
+
+    const ben = await connect('Ben');
+    ben.send({ t: 'join', code: room.code });
+    await ben.next('welcome', (m) => m.seatId === 'seat_1');
+
+    const cal = await connect('Cal');
+    cal.send({ t: 'join', code: room.code });
+    await cal.next('welcome', (m) => m.seatId === 'seat_2');
+
+    host.action({ t: 'CHOOSE_CHAR', seat: 'seat_0', charId: 'char.green_a' });
+    ben.action({ t: 'CHOOSE_CHAR', seat: 'seat_1', charId: 'char.red_a' });
+    cal.action({ t: 'CHOOSE_CHAR', seat: 'seat_2', charId: 'char.blue_a' });
+    await host.waitForState((m) =>
+      Object.values(m.state.players).every((p) => p.charId !== null),
+    );
+
+    host.action({ t: 'START_GAME', seat: 'seat_0' });
+    await host.waitForState((m) => m.state.phase === 'explore');
+    return { host, ben, cal, room, live: harness.rooms.get(room.code)! };
+  }
+
+  it('arms on the first sweep and broadcasts the deadline', async () => {
+    const { host, live } = await startedRoom();
+    expect(live.state.turnDeadline).toBeNull();
+
+    const now = Date.now();
+    harness.gateway.sweepTimers(now);
+
+    expect(live.state.turnDeadline).toBe(now + live.state.timers.turnMs);
+    const snap = await host.waitForState((m) => m.state.turnDeadline !== null);
+    expect(snap.state.turnDeadline).toBe(live.state.turnDeadline);
+  });
+
+  it('costs nothing while no deadline is due', async () => {
+    const { live } = await startedRoom();
+    const now = Date.now();
+    harness.gateway.sweepTimers(now);
+
+    const version = live.state.version;
+    const logLength = live.log.length;
+    for (let i = 1; i <= 5; i++) harness.gateway.sweepTimers(now + i * 100);
+
+    // Five sweeps, nothing due: no version bump and not one line of log. The
+    // interval runs every second for the life of a room, so an inert sweep
+    // being free is the difference between a stable log and an unbounded one.
+    expect(live.state.version).toBe(version);
+    expect(live.log.length).toBe(logLength);
+  });
+
+  it('ends the turn of a player who has dropped', async () => {
+    const { host, ben, cal, live } = await startedRoom();
+    const stalled = live.state.activeSeat!;
+    const bySeat: Record<string, Client> = { seat_0: host, seat_1: ben, seat_2: cal };
+    // Turn order is shuffled, so the stalled seat is whoever it is. Watch from
+    // a seat that is definitely still connected.
+    const watcher = Object.entries(bySeat).find(([seat]) => seat !== stalled)![1];
+
+    // The active player walks away. Before this fix the room stopped here,
+    // permanently: nobody else could act and no clock was running.
+    bySeat[stalled]!.close();
+    await watcher.waitForState((m) => m.state.players[stalled]?.connected === false);
+
+    const now = Date.now();
+    harness.gateway.sweepTimers(now);
+    // The short budget applies, not the ten-minute one.
+    expect(live.state.turnDeadline).toBe(now + live.state.timers.disconnectedMs);
+    expect(live.state.timers.disconnectedMs).toBeLessThan(live.state.timers.turnMs);
+
+    harness.gateway.sweepTimers(live.state.turnDeadline!);
+    expect(live.state.activeSeat).not.toBe(stalled);
+
+    // A seat that is still present sees the turn move on.
+    const moved = await watcher.waitForState((m) => m.state.activeSeat !== stalled);
+    expect(moved.state.activeSeat).toBe(live.state.activeSeat);
+  });
+
+  it('does not run a clock in the lobby', async () => {
+    const host = await connect('Solo');
+    host.send({ t: 'create' });
+    const room = await host.next('room');
+    const live = harness.rooms.get(room.code)!;
+
+    const version = live.state.version;
+    harness.gateway.sweepTimers(Date.now() + 60 * 60 * 1000);
+    expect(live.state.turnDeadline).toBeNull();
+    expect(live.state.version).toBe(version);
   });
 });
 

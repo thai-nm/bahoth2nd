@@ -108,6 +108,16 @@ export function checkInvariants(state: GameState): string[] {
     problems.push(`no activeSeat during phase ${state.phase}`);
   }
 
+  // 6b. A turn clock only runs while somebody is taking a turn. A deadline
+  //     left armed in the lobby or after game over would expire against a
+  //     seat that is no longer active.
+  if (
+    state.turnDeadline !== null &&
+    (state.activeSeat === null || !['explore', 'haunt'].includes(state.phase))
+  ) {
+    problems.push(`turnDeadline is armed during phase ${state.phase}`);
+  }
+
   // 7. A pending prompt targets a real seat.
   if (state.pending && !state.players[state.pending.seatId]) {
     problems.push(`pending prompt targets unknown seat ${state.pending.seatId}`);
