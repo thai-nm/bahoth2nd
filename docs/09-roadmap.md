@@ -168,14 +168,14 @@ M0 ──▶ M1 ──▶ M2 ──▶ M3 ──▶ M4 ──▶ M5
                        └──────▶ M6 (parallelisable after M4)
 ```
 
-| Risk | Mitigation |
-| --- | --- |
-| **Haunt variety defeats the DSL** — the biggest risk in the project | The script escape hatch exists from the start, and the 30-minute timebox is a rule, not a suggestion. Five deliberately dissimilar haunts in M4 test the vocabulary early. |
-| **Content entry is a slog** — 44 tiles, ~65 cards, 12 characters, 50 haunt-table rows, all by hand | Do it in M2/M3 as scheduled, not "later". Content validation tests catch transcription errors. Consider a small internal editor if it drags. |
-| **Prompt suspend/resume gets bolted on badly** | Build it once in M2 for tile rotation, generalise it in M3 inside the effect interpreter, before any haunt depends on it. |
-| **Trait-as-value instead of trait-as-index** | Called out in three documents; caught by the content validation test asserting 8-entry tracks. |
-| **Scope creep into art and animation** | M5 is a fixed box. Nothing visual moves earlier. |
-| **Two-person team stalls at M6** | M6 is explicitly ongoing and shippable in increments; the game is complete and playable without it. |
+| Risk                                                                                               | Mitigation                                                                                                                                                                 |
+| -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Haunt variety defeats the DSL** — the biggest risk in the project                                | The script escape hatch exists from the start, and the 30-minute timebox is a rule, not a suggestion. Five deliberately dissimilar haunts in M4 test the vocabulary early. |
+| **Content entry is a slog** — 44 tiles, ~65 cards, 12 characters, 50 haunt-table rows, all by hand | Do it in M2/M3 as scheduled, not "later". Content validation tests catch transcription errors. Consider a small internal editor if it drags.                               |
+| **Prompt suspend/resume gets bolted on badly**                                                     | Build it once in M2 for tile rotation, generalise it in M3 inside the effect interpreter, before any haunt depends on it.                                                  |
+| **Trait-as-value instead of trait-as-index**                                                       | Called out in three documents; caught by the content validation test asserting 8-entry tracks.                                                                             |
+| **Scope creep into art and animation**                                                             | M5 is a fixed box. Nothing visual moves earlier.                                                                                                                           |
+| **Two-person team stalls at M6**                                                                   | M6 is explicitly ongoing and shippable in increments; the game is complete and playable without it.                                                                        |
 
 ---
 

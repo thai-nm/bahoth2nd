@@ -22,31 +22,31 @@ const HauntSchema = z.object({
   setup: z.array(EffectSchema),
   monsters: z.array(MonsterDefSchema).default([]),
   traitor: SideSchema,
-  heroes:  SideSchema,
-  rules:   z.array(TriggerRuleSchema).default([]),
-  scriptId: z.string().optional(),   // escape hatch, see 8.5
+  heroes: SideSchema,
+  rules: z.array(TriggerRuleSchema).default([]),
+  scriptId: z.string().optional(), // escape hatch, see 8.5
   implemented: z.boolean().default(false),
 });
 
 const SideSchema = z.object({
-  goal: z.string(),                  // prose shown to that side only
-  rules: z.array(z.string()),        // prose bullets shown to that side only
-  win: z.array(ConditionSchema),     // machine-checked win conditions
+  goal: z.string(), // prose shown to that side only
+  rules: z.array(z.string()), // prose bullets shown to that side only
+  win: z.array(ConditionSchema), // machine-checked win conditions
 });
 
 const TraitorRuleSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: 'trigger' }),                       // whoever drew the omen
+  z.object({ kind: 'trigger' }), // whoever drew the omen
   z.object({ kind: 'highest', trait: TraitSchema }),
-  z.object({ kind: 'lowest',  trait: TraitSchema }),
-  z.object({ kind: 'holder',  cardId: z.string() }),
-  z.object({ kind: 'none' }),                          // survival haunts
+  z.object({ kind: 'lowest', trait: TraitSchema }),
+  z.object({ kind: 'holder', cardId: z.string() }),
+  z.object({ kind: 'none' }), // survival haunts
 ]);
 ```
 
 `implemented: false` haunts still load: the game reveals the haunt, shows both
 sides their prose, and then runs in **manual mode** — the engine enforces
 movement, dice, and combat, but win conditions are declared by a majority vote
-control in the UI. This means the game is *playable end to end* from M4 even
+control in the UI. This means the game is _playable end to end_ from M4 even
 with 45 haunts unwritten, which is a much better failure mode than a crash.
 
 ## 8.2 Conditions
@@ -58,13 +58,19 @@ type Condition =
   | { k: 'in_room'; who: SeatRef; tile: TileId }
   | { k: 'holds'; who: SeatRef; cardId: CardId }
   | { k: 'trait_at_least'; who: SeatRef; trait: Trait; value: number }
-  | { k: 'flag'; scope: 'game' | 'seat' | 'tile'; key: string;
-      op: '=' | '>=' | '<='; value: number | boolean | string; ref?: string }
+  | {
+      k: 'flag';
+      scope: 'game' | 'seat' | 'tile';
+      key: string;
+      op: '=' | '>=' | '<=';
+      value: number | boolean | string;
+      ref?: string;
+    }
   | { k: 'count'; of: CountableRef; op: '>=' | '<=' | '='; value: number }
-  | { k: 'turns_elapsed'; op: '>=' ; value: number }
+  | { k: 'turns_elapsed'; op: '>='; value: number }
   | { k: 'not'; c: Condition }
   | { k: 'and'; cs: Condition[] }
-  | { k: 'or';  cs: Condition[] };
+  | { k: 'or'; cs: Condition[] };
 ```
 
 `SeatRef` resolves to seats: `'actor' | 'traitor' | 'any_hero' | 'all_heroes'
@@ -79,22 +85,27 @@ The same `Effect` type is used by card `onDraw`/`onUse`, tile `onEnter`, haunt
 
 ```ts
 type Effect =
-  | { e: 'trait'; who: SeatRef; trait: Trait; delta: number }   // steps, not value
-  | { e: 'roll'; who: SeatRef; trait: Trait; then: Branch[] }   // branch on total
+  | { e: 'trait'; who: SeatRef; trait: Trait; delta: number } // steps, not value
+  | { e: 'roll'; who: SeatRef; trait: Trait; then: Branch[] } // branch on total
   | { e: 'move'; who: SeatRef; to: RoomRef }
   | { e: 'give_card'; who: SeatRef; card: CardRef }
   | { e: 'take_card'; who: SeatRef; card: CardRef; to: 'discard' | 'room' }
   | { e: 'spawn_monster'; def: string; at: RoomRef; count: number | DiceRef }
   | { e: 'kill'; who: SeatRef | MonsterRef }
   | { e: 'place_token'; token: string; at: RoomRef }
-  | { e: 'set_flag'; scope: 'game'|'seat'|'tile'; key: string;
-      value: number|boolean|string; ref?: SeatRef | RoomRef }
+  | {
+      e: 'set_flag';
+      scope: 'game' | 'seat' | 'tile';
+      key: string;
+      value: number | boolean | string;
+      ref?: SeatRef | RoomRef;
+    }
   | { e: 'prompt'; who: SeatRef; prompt: PromptSpec; then: Branch[] }
   | { e: 'end_turn'; who: SeatRef }
   | { e: 'log'; text: string }
   | { e: 'if'; c: Condition; then: Effect[]; else?: Effect[] }
   | { e: 'for_each'; who: SeatRef; do: Effect[] }
-  | { e: 'script'; id: string; args?: Record<string, unknown> };  // escape hatch
+  | { e: 'script'; id: string; args?: Record<string, unknown> }; // escape hatch
 ```
 
 `RoomRef` covers `'actor_room' | 'entrance_hall' | { tile: TileId } |
@@ -117,10 +128,19 @@ Two things to get right early, because retrofitting them is painful:
 const TriggerRuleSchema = z.object({
   id: z.string(),
   on: z.enum([
-    'turn_start', 'turn_end', 'round_end',
-    'enter_room', 'leave_room', 'discover_room',
-    'draw_card', 'attack_declared', 'attack_resolved',
-    'damage_taken', 'death', 'item_used', 'haunt_start',
+    'turn_start',
+    'turn_end',
+    'round_end',
+    'enter_room',
+    'leave_room',
+    'discover_room',
+    'draw_card',
+    'attack_declared',
+    'attack_resolved',
+    'damage_taken',
+    'death',
+    'item_used',
+    'haunt_start',
   ]),
   who: SeatRefSchema.default('actor'),
   when: ConditionSchema.optional(),
@@ -170,15 +190,16 @@ Rules for scripts:
 
 ```ts
 const MonsterDefSchema = z.object({
-  def: z.string(),                     // "zombie", referenced by spawn_monster
+  def: z.string(), // "zombie", referenced by spawn_monster
   name: z.string(),
   speed: z.number().nullable(),
   might: z.number().nullable(),
   canBeDamaged: z.boolean().default(true),
   canBeKilled: z.boolean().default(true),
   stunnedInstead: z.boolean().default(false),
-  movement: z.enum(['normal','ignore_doors','through_walls','stationary'])
-            .default('normal'),
+  movement: z
+    .enum(['normal', 'ignore_doors', 'through_walls', 'stationary'])
+    .default('normal'),
   rules: z.array(TriggerRuleSchema).default([]),
 });
 ```
