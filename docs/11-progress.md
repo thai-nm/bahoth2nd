@@ -9,7 +9,7 @@ Living status document. Updated when a milestone moves, not on a schedule.
 | Milestone                        | Status         | Notes                                                         |
 | -------------------------------- | -------------- | ------------------------------------------------------------- |
 | M0 — Skeleton and the spine      | ✅ Complete    | Merged — [PR #2](https://github.com/thai-nm/bahoth2nd/pull/2) |
-| M1 — Seats, identity, redaction  | 🟡 ~70%        | Six of nine items done; see below                             |
+| M1 — Seats, identity, redaction  | 🟡 ~85%        | Eight of nine items done; only the remove-player vote is left |
 | M2 — The house                   | ⬜ Not started | The next substantial piece of work                            |
 | M3 — Cards, traits, dice         | ⬜ Not started |                                                               |
 | M4 — The haunt, and five of them | ⬜ Not started |                                                               |
@@ -87,7 +87,7 @@ Recorded because each one was invisible to the tests that existed at the time.
 | Character select in the lobby                                                          | ✅ Done                       |
 | Trait tracks in state as indices                                                       | ✅ Done                       |
 | Host transfer when the host drops                                                      | ✅ Done                       |
-| Turn timers and the `TICK` action                                                      | ❌ Not done                   |
+| Turn timers and the `TICK` action                                                      | ✅ Done                       |
 | Disconnect handling and the remove-player vote                                         | 🟡 Disconnect yes, vote no    |
 
 ---
@@ -96,17 +96,6 @@ Recorded because each one was invisible to the tests that existed at the time.
 
 Open defects in code that has shipped to a branch. Each one has a milestone by
 which it must be fixed, and a note on why it is not visible yet.
-
-### D3 — Turn timers are declared but never read _(M1)_
-
-`config.turnTimeoutMs` and `config.disconnectTimeoutMs` exist and are
-documented in the README, but nothing reads them. The engine handles the `TICK`
-action; the server never sends one. A disconnected player on their turn stalls
-the game indefinitely.
-
-This is the failure mode worth naming out loud: **a config value that is
-declared, documented, and never read looks implemented from every angle except
-the one that matters.**
 
 ### D4 — No remove-player vote _(M1)_
 
@@ -118,6 +107,34 @@ A seat that never returns cannot be removed from `turnOrder`.
 
 Kept rather than deleted: each one is a note on a failure mode worth
 recognising again.
+
+### D3 — Turn timers were declared but never read _(fixed 2026-08-01)_
+
+`config.turnTimeoutMs` and `config.disconnectTimeoutMs` existed and were
+documented in the README, but nothing read them. The engine handled `TICK`; the
+server never sent one. A disconnected player on their turn stalled the room
+permanently.
+
+The failure mode worth naming out loud: **a config value that is declared,
+documented, and never read looks implemented from every angle except the one
+that matters.**
+
+**Fixed by** putting the budgets in `GameState.timers` (fixed at room creation,
+recorded in the log header, so a room cannot diverge from its own log when
+config changes), adding `turnDeadline`, and having the server sweep rooms on an
+interval and issue `TICK` only where a deadline is actually due.
+
+The clock is armed by the first `TICK` of a turn rather than when the turn
+starts, because the engine may not read a clock — a `TICK` is the only way time
+enters it. Dropping or reconnecting mid-turn disarms it, so the next tick
+re-arms against the budget that now applies.
+
+**A second bug fell out of this one.** `reduce` bumped the version on every
+accepted action, including inert ones, and the server logs, broadcasts, and
+refreshes room liveness on any accepted action. A once-per-second tick would
+therefore have grown every room's log without bound and kept idle rooms alive
+forever. Inert actions now return the state by reference and are not logged —
+which also removes the no-op `RECONNECT` that every join was writing.
 
 ### D2 — Host transfer ignored connection state _(fixed 2026-08-01)_
 

@@ -44,6 +44,23 @@ export class Gateway {
     this.wss.on('connection', (ws) => this.onConnection(ws));
   }
 
+  /**
+   * Drive the turn clock. Called on an interval; safe to call at any rate.
+   *
+   * The engine is pure and cannot read a clock, so time only reaches it as the
+   * `now` on a `TICK` action. This is where that happens — and it happens only
+   * for rooms with something actually due, so an idle room is free.
+   */
+  sweepTimers(now = Date.now()): void {
+    for (const room of this.rooms.all()) {
+      if (!this.rooms.isTickDue(room, now)) continue;
+      const before = room.state.version;
+      const result = this.rooms.apply(room, { t: 'TICK', now });
+      if (!result.ok || room.state.version === before) continue;
+      this.broadcastState(room, result.events);
+    }
+  }
+
   private onConnection(ws: WebSocket): void {
     const conn: Conn = {
       ws,

@@ -58,6 +58,15 @@ export function reduce(
     return { state, events: [], error: result.error };
   }
 
+  // Accepted but inert: a TICK with nothing due, a RECONNECT for a seat that
+  // never dropped. Bumping the version would make nothing look like something
+  // — the server logs, broadcasts, and refreshes room activity on every
+  // accepted action, so a periodic TICK would keep an idle room alive forever
+  // and grow its log without bound.
+  if (result.state === state) {
+    return { state, events: result.events };
+  }
+
   const problems = checkInvariants(result.state);
   if (problems.length > 0) {
     options.onInvariantViolation?.(problems, result.state);
@@ -253,6 +262,9 @@ function startGame(state: GameState, seat: SeatId): ReduceResult {
       turnOrder,
       activeSeat: first,
       round: 1,
+      // Unarmed: the engine cannot read a clock, so the first TICK of the turn
+      // sets the deadline.
+      turnDeadline: null,
     },
     events: [
       { t: 'game_started', turnOrder },
@@ -286,7 +298,9 @@ function endTurn(state: GameState, seat: SeatId): ReduceResult {
     : state.players;
 
   return {
-    state: { ...state, players, activeSeat: next, round },
+    // The clock is disarmed, not re-armed: the next TICK arms it with the
+    // budget that suits whoever is now active.
+    state: { ...state, players, activeSeat: next, round, turnDeadline: null },
     events: [
       { t: 'turn_ended', seat },
       { t: 'turn_started', seat: next, round },
@@ -306,6 +320,11 @@ function setConnected(state: GameState, seat: SeatId, connected: boolean): Reduc
   const next: GameState = {
     ...state,
     players: { ...state.players, [seat]: { ...player, connected } },
+    // The active seat's connection state chooses which budget applies, so a
+    // drop or return mid-turn disarms the clock and the next TICK re-arms it
+    // with the right one. Dropping shortens the turn to 90s; coming back
+    // restores the full budget.
+    turnDeadline: state.activeSeat === seat ? null : state.turnDeadline,
   };
 
   // The host is derived from connection state, so a drop or a return can move
@@ -364,20 +383,84 @@ function concede(state: GameState, seat: SeatId): ReduceResult {
   };
 }
 
+/** Whether a turn clock should be running at all. */
+function turnClockRuns(state: GameState): boolean {
+  return (
+    (state.phase === 'explore' || state.phase === 'haunt') && state.activeSeat !== null
+  );
+}
+
 /**
- * Server-originated clock tick. Resolves expired prompts with their default
- * answer. `now` is carried in the action so the engine never reads a clock and
- * replay stays deterministic (docs/05-engine.md#52-actions).
+ * How long the active seat gets. A seat that has dropped gets the short budget
+ * — the game does not pause for an absent player
+ * (docs/06-networking.md#disconnection-behaviour).
+ */
+function turnBudget(state: GameState): number {
+  const active = state.activeSeat === null ? undefined : state.players[state.activeSeat];
+  return active?.connected === false ? state.timers.disconnectedMs : state.timers.turnMs;
+}
+
+/**
+ * Server-originated clock tick: the engine's only knowledge of time.
+ *
+ * `now` is carried in the action rather than read from a clock, so the engine
+ * stays pure and a replayed log reproduces the same deadlines
+ * (docs/05-engine.md#52-actions). A TICK does three things, in order:
+ *
+ *   1. resolves a prompt whose own deadline has passed;
+ *   2. arms the turn clock if it is not running yet — this is why the first
+ *      TICK of a turn changes state even though nothing has expired;
+ *   3. ends the turn if the turn clock has expired.
+ *
+ * A TICK with nothing to do returns the state unchanged, by reference, so the
+ * server neither logs it nor counts it as room activity.
  */
 function tick(state: GameState, now: number): ReduceResult {
-  const pending = state.pending;
-  if (!pending || pending.deadline === null || now < pending.deadline) {
-    return { state, events: [] };
+  let next = state;
+  const events: GameEvent[] = [];
+
+  const pending = next.pending;
+  if (pending && pending.deadline !== null && now >= pending.deadline) {
+    // M2 gives each prompt kind a real default answer; until prompts exist,
+    // clearing is the whole behaviour.
+    next = { ...next, pending: null };
+    events.push({
+      t: 'log',
+      text: 'A decision timed out and was resolved automatically',
+    });
   }
-  // M0 has no prompt kinds yet; clearing is the correct default behaviour and
-  // the real per-kind defaults land with the prompt system in M2.
+
+  if (!turnClockRuns(next)) {
+    // Disarm a clock left over from a phase that no longer has turns.
+    if (next.turnDeadline !== null) next = { ...next, turnDeadline: null };
+    return { state: next, events };
+  }
+
+  if (next.turnDeadline === null) {
+    return { state: { ...next, turnDeadline: now + turnBudget(next) }, events };
+  }
+
+  if (now < next.turnDeadline) {
+    return { state: next, events };
+  }
+
+  // Expired. Clear any prompt still blocking the turn — an unanswered prompt
+  // must not be able to hold the room open past the deadline — and pass play on.
+  const seat = next.activeSeat!;
+  if (next.pending) next = { ...next, pending: null };
+
+  const ended = endTurn(next, seat);
+  if (ended.error) {
+    // Nothing legal to do; disarm rather than spin on an expired deadline.
+    return { state: { ...next, turnDeadline: null }, events };
+  }
+
   return {
-    state: { ...state, pending: null },
-    events: [{ t: 'log', text: 'A decision timed out and was resolved automatically' }],
+    state: ended.state,
+    events: [
+      ...events,
+      { t: 'log', text: `${next.players[seat]?.name ?? seat} ran out of time` },
+      ...ended.events,
+    ],
   };
 }

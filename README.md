@@ -84,7 +84,12 @@ and CI passes without any of it. See
 | `ROOM_TTL_HOURS`             | `4`                    | Idle room eviction                     |
 | `TURN_TIMEOUT_SECONDS`       | `600`                  | Connected-player turn timer            |
 | `DISCONNECT_TIMEOUT_SECONDS` | `90`                   | Disconnected-player turn timer         |
+| `TICK_INTERVAL_MS`           | `1000`                 | Turn-clock granularity                 |
 | `LOG_LEVEL`                  | `info`                 | `debug` \| `info` \| `warn` \| `error` |
+
+Both turn timers are fixed per room when it is created and recorded in its
+action log, so changing them does not retroactively alter a room already in
+progress — or make it diverge from its own log on replay.
 
 ## Known constraints
 

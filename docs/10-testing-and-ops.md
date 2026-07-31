@@ -102,8 +102,9 @@ PORT=8080
 CONTENT_DIR=/app/content        # real content, mounted, not baked into the image
 DATA_DIR=/app/data              # room action logs
 ROOM_TTL_HOURS=4
-TURN_TIMEOUT_SECONDS=600
-DISCONNECT_TIMEOUT_SECONDS=90
+TURN_TIMEOUT_SECONDS=600        # baked into each room at creation
+DISCONNECT_TIMEOUT_SECONDS=90   # ditto; a room never changes budget mid-game
+TICK_INTERVAL_MS=1000           # how often rooms are checked for a due deadline
 LOG_LEVEL=info
 ```
 

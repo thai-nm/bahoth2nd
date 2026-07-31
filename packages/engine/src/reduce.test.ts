@@ -340,6 +340,135 @@ describe('turn loop', () => {
   });
 });
 
+describe('the turn clock', () => {
+  const T0 = 1_700_000_000_000;
+
+  it('is unarmed until the first TICK, because the engine has no clock', () => {
+    const g = startedGame();
+    expect(g.state.turnDeadline).toBeNull();
+
+    const armed = reduce(g.state, { t: 'TICK', now: T0 }, content);
+    expect(armed.error).toBeUndefined();
+    expect(armed.state.turnDeadline).toBe(T0 + g.state.timers.turnMs);
+  });
+
+  it('does nothing, and costs nothing, while the deadline is in the future', () => {
+    const g = startedGame();
+    const armed = reduce(g.state, { t: 'TICK', now: T0 }, content).state;
+
+    const idle = reduce(armed, { t: 'TICK', now: T0 + 1000 }, content);
+    expect(idle.error).toBeUndefined();
+    // Returned by reference and with no version bump: the server keys logging,
+    // broadcasting, and room liveness off a change, so an inert tick must not
+    // look like one.
+    expect(idle.state).toBe(armed);
+    expect(idle.state.version).toBe(armed.version);
+    expect(idle.events).toEqual([]);
+  });
+
+  it('ends the turn when the deadline passes', () => {
+    const g = startedGame();
+    const [first, second] = g.state.turnOrder;
+    const armed = reduce(g.state, { t: 'TICK', now: T0 }, content).state;
+
+    const expired = reduce(
+      armed,
+      { t: 'TICK', now: T0 + g.state.timers.turnMs },
+      content,
+    );
+    expect(expired.error).toBeUndefined();
+    expect(expired.state.activeSeat).toBe(second);
+    expect(expired.state.activeSeat).not.toBe(first);
+    // Disarmed again, ready for the next seat's budget.
+    expect(expired.state.turnDeadline).toBeNull();
+    expect(expired.events).toContainEqual({ t: 'turn_ended', seat: first });
+    expect(
+      expired.events.some((e) => e.t === 'log' && /ran out of time/.test(e.text)),
+    ).toBe(true);
+  });
+
+  it('gives a seat that has dropped the shorter budget', () => {
+    const g = startedGame();
+    const active = g.state.activeSeat!;
+    const dropped = reduce(g.state, { t: 'DISCONNECT', seat: active }, content).state;
+
+    const armed = reduce(dropped, { t: 'TICK', now: T0 }, content).state;
+    expect(armed.turnDeadline).toBe(T0 + g.state.timers.disconnectedMs);
+    expect(g.state.timers.disconnectedMs).toBeLessThan(g.state.timers.turnMs);
+  });
+
+  it('re-arms with the short budget when the active seat drops mid-turn', () => {
+    const g = startedGame();
+    const active = g.state.activeSeat!;
+    const armed = reduce(g.state, { t: 'TICK', now: T0 }, content).state;
+    expect(armed.turnDeadline).toBe(T0 + g.state.timers.turnMs);
+
+    // Dropping disarms; the next tick re-arms against the shorter budget, so a
+    // player who walks out at the start of a 10-minute turn stalls the room
+    // for 90 seconds, not for ten minutes.
+    const gone = reduce(armed, { t: 'DISCONNECT', seat: active }, content).state;
+    expect(gone.turnDeadline).toBeNull();
+    const rearmed = reduce(gone, { t: 'TICK', now: T0 + 5000 }, content).state;
+    expect(rearmed.turnDeadline).toBe(T0 + 5000 + g.state.timers.disconnectedMs);
+  });
+
+  it('restores the full budget when the active seat comes back', () => {
+    const g = startedGame();
+    const active = g.state.activeSeat!;
+    let state = reduce(g.state, { t: 'DISCONNECT', seat: active }, content).state;
+    state = reduce(state, { t: 'TICK', now: T0 }, content).state;
+    expect(state.turnDeadline).toBe(T0 + g.state.timers.disconnectedMs);
+
+    state = reduce(state, { t: 'RECONNECT', seat: active }, content).state;
+    expect(state.turnDeadline).toBeNull();
+    state = reduce(state, { t: 'TICK', now: T0 + 1000 }, content).state;
+    expect(state.turnDeadline).toBe(T0 + 1000 + g.state.timers.turnMs);
+  });
+
+  it('does not run in the lobby', () => {
+    const g = playGame({ players: ['Ana', 'Ben', 'Cal'] });
+    const ticked = reduce(g.state, { t: 'TICK', now: T0 }, content);
+    expect(ticked.state).toBe(g.state);
+    expect(ticked.state.turnDeadline).toBeNull();
+  });
+
+  it('keeps the room moving indefinitely when nobody is connected', () => {
+    // The failure this replaces: a disconnected active player stalled the room
+    // forever. Now every expiry passes play on, so the game keeps advancing.
+    const g = startedGame();
+    let state = g.state;
+    for (const seat of g.state.turnOrder) {
+      state = reduce(state, { t: 'DISCONNECT', seat }, content).state;
+    }
+
+    let now = T0;
+    const seen: string[] = [];
+    for (let i = 0; i < 6; i++) {
+      state = reduce(state, { t: 'TICK', now }, content).state; // arms
+      now = state.turnDeadline!;
+      state = reduce(state, { t: 'TICK', now }, content).state; // expires
+      seen.push(state.activeSeat!);
+    }
+    expect(new Set(seen).size).toBe(g.state.turnOrder.length);
+    expect(state.round).toBeGreaterThan(1);
+  });
+
+  it('replays to the same deadlines from the log', () => {
+    const g = startedGame({ seed: 77 });
+    const ticks: GameAction[] = [
+      { t: 'TICK', now: T0 },
+      { t: 'TICK', now: T0 + g.state.timers.turnMs },
+      { t: 'TICK', now: T0 + g.state.timers.turnMs + 1 },
+    ];
+    let state = g.state;
+    for (const a of ticks) state = reduce(state, a, content).state;
+
+    const r = replay([...g.accepted, ...ticks], { seed: 77, content });
+    expect(r.errors).toEqual([]);
+    expect(JSON.stringify(r.state)).toBe(JSON.stringify(state));
+  });
+});
+
 describe('unimplemented actions', () => {
   it('are rejected cleanly rather than silently ignored', () => {
     const g = startedGame();
