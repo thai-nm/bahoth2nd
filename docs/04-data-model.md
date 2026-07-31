@@ -1,25 +1,25 @@
 # 04 — Data Model
 
 All types live in `packages/shared/src/types/`. Content schemas live in
-`packages/content/src/schemas/` as zod schemas that *infer* their TypeScript
+`packages/content/src/schemas/` as zod schemas that _infer_ their TypeScript
 types, so there is exactly one definition of each shape.
 
 ## 4.1 Primitives
 
 ```ts
-type SeatId    = string;   // stable per player per room, e.g. "seat_3"
-type RoomCode  = string;   // 5 chars, uppercase, no vowels (avoids words)
-type TileId    = string;   // content id, e.g. "tile.ballroom"
-type CardId    = string;   // content id, e.g. "omen.spear"
-type PlacedId  = string;   // instance id of a tile on the board
-type CharId    = string;   // content id, e.g. "char.ox_bellows"
-type HauntId   = number;   // 1..50
+type SeatId = string; // stable per player per room, e.g. "seat_3"
+type RoomCode = string; // 5 chars, uppercase, no vowels (avoids words)
+type TileId = string; // content id, e.g. "tile.ballroom"
+type CardId = string; // content id, e.g. "omen.spear"
+type PlacedId = string; // instance id of a tile on the board
+type CharId = string; // content id, e.g. "char.ox_bellows"
+type HauntId = number; // 1..50
 
-type Floor     = 'basement' | 'ground' | 'upper';
-type Dir       = 'n' | 'e' | 's' | 'w';
-type Rotation  = 0 | 90 | 180 | 270;
-type Trait     = 'speed' | 'might' | 'sanity' | 'knowledge';
-type DeckKind  = 'item' | 'event' | 'omen';
+type Floor = 'basement' | 'ground' | 'upper';
+type Dir = 'n' | 'e' | 's' | 'w';
+type Rotation = 0 | 90 | 180 | 270;
+type Trait = 'speed' | 'might' | 'sanity' | 'knowledge';
+type DeckKind = 'item' | 'event' | 'omen';
 ```
 
 ## 4.2 Game state
@@ -31,9 +31,9 @@ debugging all fall out for free.
 
 ```ts
 interface GameState {
-  version: number;              // increments on every reduction
+  version: number; // increments on every reduction
   contentHash: string;
-  rng: RngState;                // see 05-engine.md
+  rng: RngState; // see 05-engine.md
   phase: Phase;
   players: Record<SeatId, PlayerState>;
   turnOrder: SeatId[];
@@ -42,9 +42,9 @@ interface GameState {
   decks: Record<DeckKind, DeckState>;
   omensDrawn: number;
   haunt: HauntState | null;
-  pending: PendingPrompt | null;   // blocks the game awaiting one decision
+  pending: PendingPrompt | null; // blocks the game awaiting one decision
   monsters: Record<MonsterId, MonsterState>;
-  tokens: TokenState[];            // haunt-specific board markers
+  tokens: TokenState[]; // haunt-specific board markers
   result: GameResult | null;
 }
 ```
@@ -53,11 +53,11 @@ interface GameState {
 
 ```ts
 type Phase =
-  | 'lobby'            // seats filling, host can start
-  | 'setup'            // choosing explorers
-  | 'explore'          // pre-haunt turn loop
-  | 'haunt_reveal'     // traitor determination + haunt setup
-  | 'haunt'            // post-haunt turn loop
+  | 'lobby' // seats filling, host can start
+  | 'setup' // choosing explorers
+  | 'explore' // pre-haunt turn loop
+  | 'haunt_reveal' // traitor determination + haunt setup
+  | 'haunt' // post-haunt turn loop
   | 'game_over';
 ```
 
@@ -68,17 +68,17 @@ interface PlayerState {
   seatId: SeatId;
   name: string;
   charId: CharId | null;
-  traits: Record<Trait, number>;   // INDEX into the track, not the value
+  traits: Record<Trait, number>; // INDEX into the track, not the value
   location: PlacedId | null;
   movesLeft: number;
-  cameFrom: PlacedId | null;       // enforces the no-backtrack ruling
+  cameFrom: PlacedId | null; // enforces the no-backtrack ruling
   items: CardId[];
   omens: CardId[];
   isTraitor: boolean;
   isDead: boolean;
   connected: boolean;
   hasAttackedThisTurn: boolean;
-  flags: Record<string, number | boolean | string>;  // haunt scratch space
+  flags: Record<string, number | boolean | string>; // haunt scratch space
 }
 ```
 
@@ -91,7 +91,7 @@ which flags it uses; the engine treats them as opaque.
 ```ts
 interface BoardState {
   placed: Record<PlacedId, PlacedTile>;
-  index: Record<Floor, Record<string, PlacedId>>;  // "x,y" -> PlacedId
+  index: Record<Floor, Record<string, PlacedId>>; // "x,y" -> PlacedId
 }
 
 interface PlacedTile {
@@ -114,9 +114,9 @@ else writes to it.
 
 ```ts
 interface DeckState {
-  draw: CardId[];       // order matters, index 0 is the top
+  draw: CardId[]; // order matters, index 0 is the top
   discard: CardId[];
-  inPlay: CardId[];     // held by players or on the board
+  inPlay: CardId[]; // held by players or on the board
 }
 ```
 
@@ -130,16 +130,21 @@ Rather than sprinkling continuations through the reducer, the engine sets
 ```ts
 interface PendingPrompt {
   id: string;
-  seatId: SeatId;               // who must answer
-  kind: 'rotate_tile' | 'assign_damage' | 'choose_target'
-      | 'choose_card' | 'choose_room' | 'confirm';
-  payload: unknown;             // narrowed per kind
-  deadline: number | null;      // ms epoch; server auto-answers past this
-  defaultAnswer: unknown;       // what the timeout picks
+  seatId: SeatId; // who must answer
+  kind:
+    | 'rotate_tile'
+    | 'assign_damage'
+    | 'choose_target'
+    | 'choose_card'
+    | 'choose_room'
+    | 'confirm';
+  payload: unknown; // narrowed per kind
+  deadline: number | null; // ms epoch; server auto-answers past this
+  defaultAnswer: unknown; // what the timeout picks
 }
 ```
 
-`deadline` is a plain number and is *set by the server* and written into the
+`deadline` is a plain number and is _set by the server_ and written into the
 state, so replay stays deterministic — the engine never reads a clock.
 
 ## 4.3 Content schemas
@@ -153,14 +158,13 @@ validation is a hard startup error with the offending path printed.
 const TileSchema = z.object({
   id: z.string(),
   name: z.string(),
-  doors: z.object({ n: z.boolean(), e: z.boolean(),
-                    s: z.boolean(), w: z.boolean() }),
-  floors: z.array(FloorSchema).min(1),      // where it may be placed
+  doors: z.object({ n: z.boolean(), e: z.boolean(), s: z.boolean(), w: z.boolean() }),
+  floors: z.array(FloorSchema).min(1), // where it may be placed
   symbol: z.enum(['item', 'event', 'omen']).nullable(),
   copies: z.number().int().min(1).default(1),
   staticLinks: z.array(StaticLinkSchema).default([]),
-  onEnter:  z.array(EffectSchema).default([]),
-  rules:    z.array(TriggerRuleSchema).default([]),
+  onEnter: z.array(EffectSchema).default([]),
+  rules: z.array(TriggerRuleSchema).default([]),
   art: z.object({ bg: z.string(), icon: z.string().optional() }).optional(),
 });
 ```
@@ -174,7 +178,7 @@ Special connections that ignore adjacency (staircases, elevator, chute):
 
 ```ts
 type StaticLink =
-  | { kind: 'to_tile';  target: TileId; twoWay: boolean }
+  | { kind: 'to_tile'; target: TileId; twoWay: boolean }
   | { kind: 'to_floor'; floor: Floor; landing: TileId; twoWay: boolean }
   | { kind: 'oneway_drop'; floor: Floor; effects: Effect[] };
 ```
@@ -189,13 +193,18 @@ movement code is the single highest-leverage decision in the content model.
 const CharacterSchema = z.object({
   id: z.string(),
   name: z.string(),
-  colour: z.enum(['red','green','blue','white','purple','yellow']),
+  colour: z.enum(['red', 'green', 'blue', 'white', 'purple', 'yellow']),
   tracks: z.object({
-    speed:     TrackSchema, might:     TrackSchema,
-    sanity:    TrackSchema, knowledge: TrackSchema,
+    speed: TrackSchema,
+    might: TrackSchema,
+    sanity: TrackSchema,
+    knowledge: TrackSchema,
   }),
   start: z.object({
-    speed: Idx, might: Idx, sanity: Idx, knowledge: Idx,
+    speed: Idx,
+    might: Idx,
+    sanity: Idx,
+    knowledge: Idx,
   }),
 });
 
@@ -211,15 +220,15 @@ Two characters share each colour; only one of a colour may be in play.
 ```ts
 const CardSchema = z.object({
   id: z.string(),
-  deck: z.enum(['item','event','omen']),
+  deck: z.enum(['item', 'event', 'omen']),
   name: z.string(),
-  text: z.string(),                          // flavour/rules text, displayed
+  text: z.string(), // flavour/rules text, displayed
   keepInPlay: z.boolean().default(false),
   isWeapon: z.boolean().default(false),
   isCompanion: z.boolean().default(false),
-  onDraw:   z.array(EffectSchema).default([]),
-  onUse:    z.array(EffectSchema).default([]),
-  rules:    z.array(TriggerRuleSchema).default([]),
+  onDraw: z.array(EffectSchema).default([]),
+  onUse: z.array(EffectSchema).default([]),
+  rules: z.array(TriggerRuleSchema).default([]),
   needsPrompt: PromptSpecSchema.optional(),
 });
 ```
@@ -228,8 +237,8 @@ const CardSchema = z.object({
 
 ```ts
 const HauntTableSchema = z.record(
-  z.string(),                 // omen card id
-  z.record(z.string(), z.number().int().min(1).max(50))  // tile id -> haunt
+  z.string(), // omen card id
+  z.record(z.string(), z.number().int().min(1).max(50)), // tile id -> haunt
 );
 ```
 
@@ -241,7 +250,7 @@ Haunt definitions themselves are documented in
 Anything computable from `GameState` is a **selector in `engine`**, never a
 field in state. In particular:
 
-- current trait *values* (`track[index]`)
+- current trait _values_ (`track[index]`)
 - the movement graph and reachable set
 - legal actions for a seat
 - whether a win condition is met

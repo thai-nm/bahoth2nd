@@ -2,17 +2,17 @@
 
 ## 3.1 Stack, and why
 
-| Layer | Choice | Why not the alternative |
-| --- | --- | --- |
-| Language | TypeScript, everywhere | One language across client, server, engine, and content schemas. Types for game state are shared by construction rather than by convention. |
-| Client build | Vite | Fastest zero-config option; dev server, HMR, and a static build with one dependency. |
-| Client UI | React 18 | The game is 80% panels, cards, modals, and lists. That is DOM work. A game framework (Phaser, Pixi) would make the map slightly nicer and every other screen worse. |
+| Layer           | Choice                                         | Why not the alternative                                                                                                                                                                            |
+| --------------- | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Language        | TypeScript, everywhere                         | One language across client, server, engine, and content schemas. Types for game state are shared by construction rather than by convention.                                                        |
+| Client build    | Vite                                           | Fastest zero-config option; dev server, HMR, and a static build with one dependency.                                                                                                               |
+| Client UI       | React 18                                       | The game is 80% panels, cards, modals, and lists. That is DOM work. A game framework (Phaser, Pixi) would make the map slightly nicer and every other screen worse.                                |
 | Board rendering | Absolutely positioned DOM tiles + SVG overlays | 44 tiles across 3 floors is nothing. CSS transforms give pan/zoom and animation for free; tiles are inspectable in devtools; text is selectable and accessible. Canvas buys nothing at this scale. |
-| Client state | Zustand | The authoritative state arrives from the server as a snapshot. We need a store, not a state management philosophy. Redux Toolkit is fine too; do not use both. |
-| Server | Node 20 + `ws` | Turn-based, low message rate, tiny payloads. Socket.io's reconnection and fallback machinery is not needed once we implement resume-by-token ourselves — and we must implement that anyway. |
-| Validation | Zod | One schema definition serves runtime validation of network messages *and* of content JSON, and infers the TypeScript types. |
-| Tests | Vitest | Same config as Vite; the engine is pure functions, so most tests need no DOM. |
-| Repo | npm workspaces | Ships with Node. No Turborepo/Nx/Lerna until build times actually hurt. |
+| Client state    | Zustand                                        | The authoritative state arrives from the server as a snapshot. We need a store, not a state management philosophy. Redux Toolkit is fine too; do not use both.                                     |
+| Server          | Node 20 + `ws`                                 | Turn-based, low message rate, tiny payloads. Socket.io's reconnection and fallback machinery is not needed once we implement resume-by-token ourselves — and we must implement that anyway.        |
+| Validation      | Zod                                            | One schema definition serves runtime validation of network messages _and_ of content JSON, and infers the TypeScript types.                                                                        |
+| Tests           | Vitest                                         | Same config as Vite; the engine is pure functions, so most tests need no DOM.                                                                                                                      |
+| Repo            | npm workspaces                                 | Ships with Node. No Turborepo/Nx/Lerna until build times actually hurt.                                                                                                                            |
 
 Deliberately **not** using: an ORM, a database, GraphQL, a state-sync library
 (Colyseus, Yjs), a CSS framework beyond CSS Modules, or a monorepo task runner.
@@ -57,7 +57,7 @@ the rest:
 Reason for (2): the client needs to grey out illegal buttons and preview
 movement range. Sharing the legality functions means the client and server can
 never disagree about what is legal. Reason for the restriction inside (2): if
-the client ever *applies* actions locally, we inherit an entire class of
+the client ever _applies_ actions locally, we inherit an entire class of
 desync bugs for zero benefit in a turn-based game.
 
 ## 3.3 The core loop
@@ -97,9 +97,9 @@ One process. Rooms live in an in-memory `Map<RoomCode, Room>`.
 interface Room {
   code: string;
   hostSeatId: SeatId;
-  seats: Seat[];              // players, incl. disconnected ones
-  state: GameState;           // authoritative
-  log: LoggedAction[];        // append-only, also flushed to disk
+  seats: Seat[]; // players, incl. disconnected ones
+  state: GameState; // authoritative
+  log: LoggedAction[]; // append-only, also flushed to disk
   createdAt: number;
   lastActivityAt: number;
 }
@@ -109,7 +109,7 @@ interface Room {
 - The action log is flushed to `data/rooms/<code>.jsonl`. On process start, any
   log younger than the eviction window is replayed through the engine to
   rebuild state. This gives crash recovery without a database, and it works
-  *because* the engine is deterministic.
+  _because_ the engine is deterministic.
 - Horizontal scaling is out of scope. If it is ever needed, rooms are already
   independent, so a consistent-hash router in front of N processes is the
   answer — not shared state.

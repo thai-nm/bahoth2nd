@@ -16,9 +16,9 @@ export function reduce(
 ): ReduceResult;
 
 export interface ReduceResult {
-  state: GameState;         // new state; input is never mutated
-  events: GameEvent[];      // narration + animation hints
-  error?: RuleError;        // set iff the action was illegal; state unchanged
+  state: GameState; // new state; input is never mutated
+  events: GameEvent[]; // narration + animation hints
+  error?: RuleError; // set iff the action was illegal; state unchanged
 }
 
 // Read-only helpers, safe to use in the client.
@@ -42,27 +42,27 @@ Everything a player can do, plus a small number of server-originated actions.
 ```ts
 type GameAction =
   // lobby / setup
-  | { t: 'JOIN';          seat: SeatId; name: string }
-  | { t: 'CHOOSE_CHAR';   seat: SeatId; charId: CharId }
-  | { t: 'START_GAME';    seat: SeatId }
+  | { t: 'JOIN'; seat: SeatId; name: string }
+  | { t: 'CHOOSE_CHAR'; seat: SeatId; charId: CharId }
+  | { t: 'START_GAME'; seat: SeatId }
   // exploration & haunt turns
-  | { t: 'MOVE';          seat: SeatId; to: PlacedId }
-  | { t: 'MOVE_THROUGH';  seat: SeatId; dir: Dir }          // may discover
-  | { t: 'ROTATE_TILE';   seat: SeatId; rotation: Rotation } // answers prompt
-  | { t: 'USE_ITEM';      seat: SeatId; cardId: CardId; target?: TargetRef }
-  | { t: 'TRADE';         seat: SeatId; to: SeatId; cardIds: CardId[] }
-  | { t: 'DROP';          seat: SeatId; cardIds: CardId[] }
-  | { t: 'ROOM_ACTION';   seat: SeatId; actionId: string }
-  | { t: 'ATTACK';        seat: SeatId; target: TargetRef; trait: Trait }
+  | { t: 'MOVE'; seat: SeatId; to: PlacedId }
+  | { t: 'MOVE_THROUGH'; seat: SeatId; dir: Dir } // may discover
+  | { t: 'ROTATE_TILE'; seat: SeatId; rotation: Rotation } // answers prompt
+  | { t: 'USE_ITEM'; seat: SeatId; cardId: CardId; target?: TargetRef }
+  | { t: 'TRADE'; seat: SeatId; to: SeatId; cardIds: CardId[] }
+  | { t: 'DROP'; seat: SeatId; cardIds: CardId[] }
+  | { t: 'ROOM_ACTION'; seat: SeatId; actionId: string }
+  | { t: 'ATTACK'; seat: SeatId; target: TargetRef; trait: Trait }
   | { t: 'ASSIGN_DAMAGE'; seat: SeatId; alloc: Partial<Record<Trait, number>> }
-  | { t: 'END_TURN';      seat: SeatId }
+  | { t: 'END_TURN'; seat: SeatId }
   // generic prompt answers
-  | { t: 'ANSWER';        seat: SeatId; promptId: string; answer: unknown }
+  | { t: 'ANSWER'; seat: SeatId; promptId: string; answer: unknown }
   // server-originated
-  | { t: 'TICK';          now: number }        // resolves expired prompts
-  | { t: 'DISCONNECT';    seat: SeatId }
-  | { t: 'RECONNECT';     seat: SeatId }
-  | { t: 'CONCEDE';       seat: SeatId };
+  | { t: 'TICK'; now: number } // resolves expired prompts
+  | { t: 'DISCONNECT'; seat: SeatId }
+  | { t: 'RECONNECT'; seat: SeatId }
+  | { t: 'CONCEDE'; seat: SeatId };
 ```
 
 Two design notes:
@@ -78,35 +78,37 @@ Two design notes:
 ## 5.3 Events
 
 Events are the reducer's narration. They drive the text log, animations, and
-sound. They are *not* state.
+sound. They are _not_ state.
 
 ```ts
 type GameEvent =
-  | { t: 'moved';        seat: SeatId; from: PlacedId; to: PlacedId }
-  | { t: 'discovered';   seat: SeatId; placed: PlacedTile }
-  | { t: 'drew_card';    seat: SeatId; deck: DeckKind; cardId: CardId }
-  | { t: 'rolled';       seat: SeatId; dice: number[]; total: number;
-                         reason: string }
-  | { t: 'trait_changed';seat: SeatId; trait: Trait; from: number; to: number }
-  | { t: 'haunt_roll';   total: number; needed: number; triggered: boolean }
-  | { t: 'haunt_begun';  hauntId: HauntId; traitor: SeatId | null }
-  | { t: 'attacked';     seat: SeatId; target: TargetRef; result: AttackResult }
-  | { t: 'died';         seat: SeatId }
-  | { t: 'game_over';    result: GameResult }
-  | { t: 'log';          text: string };       // haunt scripts' free-form line
+  | { t: 'moved'; seat: SeatId; from: PlacedId; to: PlacedId }
+  | { t: 'discovered'; seat: SeatId; placed: PlacedTile }
+  | { t: 'drew_card'; seat: SeatId; deck: DeckKind; cardId: CardId }
+  | { t: 'rolled'; seat: SeatId; dice: number[]; total: number; reason: string }
+  | { t: 'trait_changed'; seat: SeatId; trait: Trait; from: number; to: number }
+  | { t: 'haunt_roll'; total: number; needed: number; triggered: boolean }
+  | { t: 'haunt_begun'; hauntId: HauntId; traitor: SeatId | null }
+  | { t: 'attacked'; seat: SeatId; target: TargetRef; result: AttackResult }
+  | { t: 'died'; seat: SeatId }
+  | { t: 'game_over'; result: GameResult }
+  | { t: 'log'; text: string }; // haunt scripts' free-form line
 ```
 
 Rule of thumb: **if the client could compute it by diffing two snapshots, it
-still gets an event** — because the diff loses the *reason*, and the reason is
+still gets an event** — because the diff loses the _reason_, and the reason is
 what the log and the animations need.
 
 ## 5.4 Determinism and RNG
 
-The engine never calls `Math.random()`. A seeded PRNG lives *inside* the
+The engine never calls `Math.random()`. A seeded PRNG lives _inside_ the
 state:
 
 ```ts
-interface RngState { seed: number; counter: number; }
+interface RngState {
+  seed: number;
+  counter: number;
+}
 ```
 
 `nextInt(rng, n)` returns `[value, newRngState]`. The implementation is
@@ -165,11 +167,11 @@ keeps the content data-driven instead of drowning in bespoke code.
    current tile have a door on `n` after rotation? Is the target cell empty?
 2. **Draw a tile.** Take the first tile in the floor's tile deck whose
    `floors` includes the current floor. Shuffle the passed-over tiles back
-   using the state RNG. *(This is the [RULING] from doc 02.)*
+   using the state RNG. _(This is the [RULING] from doc 02.)_
 3. **Prompt for rotation.** Compute the rotations that put a door on the
    south edge (facing back into the Foyer). If exactly one is legal, apply it.
    Otherwise set `pending = { kind: 'rotate_tile', seatId, payload: { tileId,
-   legalRotations } }` and stop. The next accepted action is `ROTATE_TILE`.
+legalRotations } }` and stop. The next accepted action is `ROTATE_TILE`.
 4. **Place.** Write into `board.placed` and `board.index`. Emit `discovered`.
 5. **Move the explorer.** Decrement `movesLeft`, set `cameFrom`, emit `moved`.
 6. **Resolve `onEnter`** effects from the tile.

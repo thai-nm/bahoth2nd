@@ -71,7 +71,7 @@ Milestone M6 closes the remaining 45.
 ## Intellectual property position
 
 Betrayal at House on the Hill is published by Avalon Hill / Hasbro. Game
-*mechanics* are not copyrightable, but the specific card text, room names and
+_mechanics_ are not copyrightable, but the specific card text, room names and
 descriptions, character names and portraits, haunt narrative text, and all
 artwork are.
 

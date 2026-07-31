@@ -8,7 +8,7 @@ are rare.
 
 Every frame in both directions is validated against a zod schema before it is
 looked at. An invalid frame closes the socket with a policy-violation code; a
-valid frame carrying an illegal *action* gets a polite error response and the
+valid frame carrying an illegal _action_ gets a polite error response and the
 socket stays open.
 
 ## 6.2 Message envelopes
@@ -17,27 +17,27 @@ socket stays open.
 
 ```ts
 type ClientMessage =
-  | { t: 'hello';   token?: string; name: string; contentHash: string }
-  | { t: 'create';  }                          // returns a room code
-  | { t: 'join';    code: RoomCode }
-  | { t: 'leave';   }
-  | { t: 'action';  seq: number; action: GameAction }
-  | { t: 'chat';    text: string }
-  | { t: 'ping';    }
+  | { t: 'hello'; token?: string; name: string; contentHash: string }
+  | { t: 'create' } // returns a room code
+  | { t: 'join'; code: RoomCode }
+  | { t: 'leave' }
+  | { t: 'action'; seq: number; action: GameAction }
+  | { t: 'chat'; text: string }
+  | { t: 'ping' };
 ```
 
 ### Server → client
 
 ```ts
 type ServerMessage =
-  | { t: 'welcome';  seatId: SeatId; token: string; contentHash: string }
-  | { t: 'room';     code: RoomCode; seats: PublicSeat[]; hostSeatId: SeatId }
+  | { t: 'welcome'; seatId: SeatId; token: string; contentHash: string }
+  | { t: 'room'; code: RoomCode; seats: PublicSeat[]; hostSeatId: SeatId }
   | { t: 'snapshot'; version: number; state: GameState /* redacted */ }
-  | { t: 'events';   version: number; events: GameEvent[] }
-  | { t: 'ack';      seq: number }
-  | { t: 'error';    seq?: number; code: ErrorCode; message: string }
-  | { t: 'chat';     seatId: SeatId; text: string; at: number }
-  | { t: 'pong';     }
+  | { t: 'events'; version: number; events: GameEvent[] }
+  | { t: 'ack'; seq: number }
+  | { t: 'error'; seq?: number; code: ErrorCode; message: string }
+  | { t: 'chat'; seatId: SeatId; text: string; at: number }
+  | { t: 'pong' };
 ```
 
 `snapshot` and `events` for the same reduction are sent back to back and carry
@@ -71,7 +71,7 @@ There are no accounts. Identity is a **seat token**:
   explorer stays on the board as an inert body holding its items.
 - The host role transfers to the longest-connected seat if the host drops.
 
-Turn timers apply to *connected* players too, but with a much longer default
+Turn timers apply to _connected_ players too, but with a much longer default
 (10 minutes) and a visible countdown only in the last 60 seconds. Nobody
 should lose a turn to a timer they didn't know existed.
 
@@ -82,14 +82,14 @@ server calls it once per connected seat per update.
 
 What gets redacted:
 
-| Data | Redaction |
-| --- | --- |
-| `decks[*].draw` | Replaced with `{ count: n }`; card ids removed |
-| Tile deck order | Same treatment |
-| `rng` | Removed entirely — knowing the seed predicts every future roll |
-| Traitor's haunt instructions | Sent only to the traitor's seat |
-| Heroes' haunt instructions | Sent only to non-traitor seats |
-| Unrevealed haunt id | Removed until `haunt_reveal` completes |
+| Data                         | Redaction                                                      |
+| ---------------------------- | -------------------------------------------------------------- |
+| `decks[*].draw`              | Replaced with `{ count: n }`; card ids removed                 |
+| Tile deck order              | Same treatment                                                 |
+| `rng`                        | Removed entirely — knowing the seed predicts every future roll |
+| Traitor's haunt instructions | Sent only to the traitor's seat                                |
+| Heroes' haunt instructions   | Sent only to non-traitor seats                                 |
+| Unrevealed haunt id          | Removed until `haunt_reveal` completes                         |
 
 What is **not** redacted, because the physical game is open information:
 players' items and omens, all trait values, board layout, discard piles,

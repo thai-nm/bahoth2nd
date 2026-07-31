@@ -6,13 +6,13 @@ The value is concentrated in the engine, and the engine is pure functions with
 in-state RNG. That makes the highest-value tests also the cheapest ones.
 Weight the effort accordingly:
 
-| Layer | Tool | Share of effort | What it catches |
-| --- | --- | --- | --- |
-| Engine unit + scripted games | Vitest | ~60% | Every rules bug |
-| Content validation | Vitest + zod | ~10% | Malformed/incoherent content |
-| Server protocol | Vitest + in-process ws | ~15% | Redaction leaks, reconnect, ordering |
-| Client component | Vitest + Testing Library | ~10% | Board maths, prompt wiring |
-| End-to-end | Playwright | ~5% | Smoke only: three browsers finish a turn |
+| Layer                        | Tool                     | Share of effort | What it catches                          |
+| ---------------------------- | ------------------------ | --------------- | ---------------------------------------- |
+| Engine unit + scripted games | Vitest                   | ~60%            | Every rules bug                          |
+| Content validation           | Vitest + zod             | ~10%            | Malformed/incoherent content             |
+| Server protocol              | Vitest + in-process ws   | ~15%            | Redaction leaks, reconnect, ordering     |
+| Client component             | Vitest + Testing Library | ~10%            | Board maths, prompt wiring               |
+| End-to-end                   | Playwright               | ~5%             | Smoke only: three browsers finish a turn |
 
 ### The scripted-game helper
 
@@ -36,7 +36,7 @@ expect(g.errors).toEqual([]);
 ```
 
 A rules regression test is then two lines. When a player reports a bug, the
-room's action log *is* a test case — drop the JSONL into `fixtures/replays/`
+room's action log _is_ a test case — drop the JSONL into `fixtures/replays/`
 and assert the corrected behaviour.
 
 ### Property tests worth having

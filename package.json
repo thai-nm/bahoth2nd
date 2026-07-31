@@ -1,0 +1,38 @@
+{
+  "name": "bahoth2nd",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/shared",
+    "packages/content",
+    "packages/engine",
+    "packages/server",
+    "packages/client"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "concurrently -n server,client -c cyan,magenta \"npm run dev -w @bahoth/server\" \"npm run dev -w @bahoth/client\"",
+    "build": "npm run build -w @bahoth/shared && npm run build -w @bahoth/content && npm run build -w @bahoth/engine && npm run build -w @bahoth/server && npm run build -w @bahoth/client",
+    "start": "node packages/server/dist/index.js",
+    "typecheck": "tsc --build --verbose",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rm -rf packages/*/dist packages/*/tsconfig.tsbuildinfo packages/client/dist"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@types/node": "^22.10.2",
+    "concurrently": "^9.1.0",
+    "eslint": "^9.17.0",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.1",
+    "vitest": "^4.1.10"
+  }
+}

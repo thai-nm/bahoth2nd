@@ -11,15 +11,15 @@ as verified truth.
 
 ## 2.1 Components modelled
 
-| Component | Count | Notes |
-| --- | --- | --- |
-| Explorers | 12 (6 cards, 2 sides) | Grouped in 6 colours; one colour per player |
-| Room tiles | 44 | Plus the 3 pre-placed starting tiles and the two landings |
-| Item cards | ~22 | Some are weapons, some companions |
-| Omen cards | 13 | Most are also items and stay in play |
-| Event cards | ~30 | One-shot, discarded after resolution |
-| Dice | 8 | Six-sided, faces `0,0,1,1,2,2` |
-| Haunts | 50 | Selected by an omen × room lookup table |
+| Component   | Count                 | Notes                                                     |
+| ----------- | --------------------- | --------------------------------------------------------- |
+| Explorers   | 12 (6 cards, 2 sides) | Grouped in 6 colours; one colour per player               |
+| Room tiles  | 44                    | Plus the 3 pre-placed starting tiles and the two landings |
+| Item cards  | ~22                   | Some are weapons, some companions                         |
+| Omen cards  | 13                    | Most are also items and stay in play                      |
+| Event cards | ~30                   | One-shot, discarded after resolution                      |
+| Dice        | 8                     | Six-sided, faces `0,0,1,1,2,2`                            |
+| Haunts      | 50                    | Selected by an omen × room lookup table                   |
 
 ## 2.2 Explorers and traits
 
@@ -27,7 +27,7 @@ Each explorer has four traits: **Speed, Might, Sanity, Knowledge**.
 
 A trait is not a number — it is an **index into an 8-slot track** of printed
 values. Slot 0 is the skull (death). The character card marks a starting index
-per trait. Effects move a trait *up or down the track by steps*, never by
+per trait. Effects move a trait _up or down the track by steps_, never by
 arithmetic on the value.
 
 ```
@@ -87,7 +87,7 @@ Two rooms are connected if **either**:
 Each turn, the active player:
 
 1. **Start of turn.** Resolve start-of-turn effects (haunt rules, card
-   effects). Movement budget is set to the *current* Speed value.
+   effects). Movement budget is set to the _current_ Speed value.
 2. **Move.** Spend one movement point per room entered. You may stop at any
    time. You may not re-enter a room you left this turn unless an effect says
    otherwise. **[RULING]** We enforce "no immediate backtrack into the room you
@@ -108,11 +108,11 @@ allowed only on the active player's turn, and only with the active player.
 
 ## 2.5 Cards
 
-| Deck | On draw | Persists? |
-| --- | --- | --- |
-| Item | Gain the item, held by the explorer | Yes, transferable |
-| Event | Resolve immediately, then discard | No |
-| Omen | Gain the omen (most are also items), then **haunt roll** | Yes |
+| Deck  | On draw                                                  | Persists?         |
+| ----- | -------------------------------------------------------- | ----------------- |
+| Item  | Gain the item, held by the explorer                      | Yes, transferable |
+| Event | Resolve immediately, then discard                        | No                |
+| Omen  | Gain the omen (most are also items), then **haunt roll** | Yes               |
 
 Decks are shuffled at setup. When a deck empties, its discard pile is
 reshuffled into it.
@@ -166,8 +166,8 @@ Same as the exploration phase, with these changes:
 1. Attacker rolls dice equal to their **Might** value, defender rolls dice
    equal to theirs.
 2. Higher total wins; ties do nothing.
-3. The loser takes damage equal to the difference, applied as *steps down the
-   track*, distributed by the loser across their two physical traits.
+3. The loser takes damage equal to the difference, applied as _steps down the
+   track_, distributed by the loser across their two physical traits.
 4. Some attacks are mental: same procedure using Sanity or Knowledge, damaging
    mental traits.
 
