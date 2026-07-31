@@ -6,15 +6,15 @@ Living status document. Updated when a milestone moves, not on a schedule.
 
 ## Status at a glance
 
-| Milestone                        | Status         | Notes                                                                            |
-| -------------------------------- | -------------- | -------------------------------------------------------------------------------- |
-| M0 — Skeleton and the spine      | ✅ Complete    | In review — [PR #2](https://github.com/thai-nm/bahoth2nd/pull/2), not yet merged |
-| M1 — Seats, identity, redaction  | 🟡 ~60%        | Four of seven items done; see below                                              |
-| M2 — The house                   | ⬜ Not started | The next substantial piece of work                                               |
-| M3 — Cards, traits, dice         | ⬜ Not started |                                                                                  |
-| M4 — The haunt, and five of them | ⬜ Not started |                                                                                  |
-| M5 — Polish                      | ⬜ Not started |                                                                                  |
-| M6 — The remaining 45 haunts     | ⬜ Not started |                                                                                  |
+| Milestone                        | Status         | Notes                                                         |
+| -------------------------------- | -------------- | ------------------------------------------------------------- |
+| M0 — Skeleton and the spine      | ✅ Complete    | Merged — [PR #2](https://github.com/thai-nm/bahoth2nd/pull/2) |
+| M1 — Seats, identity, redaction  | 🟡 ~70%        | Six of nine items done; see below                             |
+| M2 — The house                   | ⬜ Not started | The next substantial piece of work                            |
+| M3 — Cards, traits, dice         | ⬜ Not started |                                                               |
+| M4 — The haunt, and five of them | ⬜ Not started |                                                               |
+| M5 — Polish                      | ⬜ Not started |                                                               |
+| M6 — The remaining 45 haunts     | ⬜ Not started |                                                               |
 
 A caution for anyone reading a status table: M1's _exit criteria_ would mostly
 pass right now, while several of its _scope items_ are untouched. Exit criteria
@@ -78,17 +78,17 @@ Recorded because each one was invisible to the tests that existed at the time.
 
 ## M1 — partial
 
-| Item                                                                                   | Status                                                  |
-| -------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| Seat tokens in `localStorage`, `hello` with resume                                     | ✅ Done                                                 |
-| Per-seat connection state                                                              | ✅ Done                                                 |
-| `redactFor` plus the redaction test                                                    | ✅ Done (landed early, in M0)                           |
-| Content pipeline: schemas, loader, fixtures, hash, join-time check, `GET /api/content` | ✅ Done                                                 |
-| Character select in the lobby                                                          | ✅ Done                                                 |
-| Trait tracks in state as indices                                                       | 🟡 Storage correct, **initialisation missing** — see D1 |
-| Host transfer when the host drops                                                      | ❌ Not done                                             |
-| Turn timers and the `TICK` action                                                      | ❌ Not done                                             |
-| Disconnect handling and the remove-player vote                                         | 🟡 Disconnect yes, vote no                              |
+| Item                                                                                   | Status                        |
+| -------------------------------------------------------------------------------------- | ----------------------------- |
+| Seat tokens in `localStorage`, `hello` with resume                                     | ✅ Done                       |
+| Per-seat connection state                                                              | ✅ Done                       |
+| `redactFor` plus the redaction test                                                    | ✅ Done (landed early, in M0) |
+| Content pipeline: schemas, loader, fixtures, hash, join-time check, `GET /api/content` | ✅ Done                       |
+| Character select in the lobby                                                          | ✅ Done                       |
+| Trait tracks in state as indices                                                       | ✅ Done                       |
+| Host transfer when the host drops                                                      | ❌ Not done                   |
+| Turn timers and the `TICK` action                                                      | ❌ Not done                   |
+| Disconnect handling and the remove-player vote                                         | 🟡 Disconnect yes, vote no    |
 
 ---
 
@@ -96,29 +96,6 @@ Recorded because each one was invisible to the tests that existed at the time.
 
 Open defects in code that has shipped to a branch. Each one has a milestone by
 which it must be fixed, and a note on why it is not visible yet.
-
-### D1 — Explorers start at the skull _(must fix before M3)_
-
-`startGame` copies players forward with `{ ...p }` and never reads
-`character.start`, so after `START_GAME` every trait index is `0`.
-
-```
-traits: { speed: 0, might: 0, sanity: 0, knowledge: 0 }
-```
-
-Index 0 is the skull — the death slot. Every explorer is nominally dead from
-the moment the game begins.
-
-**Why it is invisible:** death detection does not exist until M3, and invariant
-5 only checks that indices are integers in `[0, 7]`, which `0` satisfies.
-
-**Why it matters:** this is exactly the trait-as-index failure mode that
-[02-rules-model](02-rules-model.md#22-explorers-and-traits) warns about, and
-anything built on trait values before it is fixed will be built on zeros.
-
-**Fix:** initialise `traits` from `content.charactersById[charId].start` in
-`startGame`. Add an invariant that a player with a `charId` has every trait
-index ≥ 1, which would have caught this at the first reduction.
 
 ### D2 — Host transfer does not consider connection state _(M1)_
 
@@ -141,6 +118,36 @@ the one that matters.**
 ### D4 — No remove-player vote _(M1)_
 
 A seat that never returns cannot be removed from `turnOrder`.
+
+---
+
+## Fixed defects
+
+Kept rather than deleted: each one is a note on a failure mode worth
+recognising again.
+
+### D1 — Explorers started at the skull _(fixed 2026-08-01)_
+
+`startGame` copied players forward with `{ ...p }` and never read
+`character.start`, so after `START_GAME` every trait index was `0`.
+
+```
+traits: { speed: 0, might: 0, sanity: 0, knowledge: 0 }
+```
+
+Index 0 is the skull — the death slot. Every explorer was nominally dead from
+the moment the game began.
+
+**Why it was invisible:** death detection does not exist until M3, and
+invariant 5 only checked that indices are integers in `[0, 7]`, which `0`
+satisfies. **A range check that the wrong value happens to satisfy is not a
+check.**
+
+**Fixed by** seeding `traits` from `character.start` in `CHOOSE_CHAR` rather
+than `START_GAME` — the indices are then never out of step with the chosen
+explorer, and clearing the choice returns them to zero. Invariant 5 now also
+rejects any state where a living player with a `charId` has a trait on index 0,
+which would have caught the original bug at the first reduction.
 
 ---
 
@@ -180,11 +187,9 @@ Not bugs — real properties of the design that were not obvious when planning.
 
 In order:
 
-1. **Fix D1.** A few lines plus the guarding invariant. Do this before anything
-   reads a trait value.
-2. **Close M1**: D2, D3, D4 — host transfer, the server-side turn timer that
-   issues `TICK`, and the remove-player vote.
-3. **Start M2** — the house. 44 tiles as content, the movement graph, discovery
+1. **Close M1**: D2, D3, D4 — host transfer, the server-side turn timer that
+   issues `TICK`, and the remove-player vote. One PR each.
+2. **Start M2** — the house. 44 tiles as content, the movement graph, discovery
    with the rotation prompt, and the board renderer. This is the milestone that
    makes the thing feel like the game, and the largest single content-authoring
    push so far.
