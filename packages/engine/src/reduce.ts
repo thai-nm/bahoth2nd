@@ -302,13 +302,27 @@ function setConnected(state: GameState, seat: SeatId, connected: boolean): Reduc
   if (player.connected === connected) {
     return { state, events: [] };
   }
-  return {
-    state: {
-      ...state,
-      players: { ...state.players, [seat]: { ...player, connected } },
-    },
-    events: [{ t: 'connection_changed', seat, connected }],
+
+  const next: GameState = {
+    ...state,
+    players: { ...state.players, [seat]: { ...player, connected } },
   };
+
+  // The host is derived from connection state, so a drop or a return can move
+  // it. Nothing is stored; the event exists so the change is visible in the
+  // log rather than the Start button quietly appearing on someone else's
+  // screen.
+  const events: GameEvent[] = [{ t: 'connection_changed', seat, connected }];
+  const before = getHostSeat(state);
+  const after = getHostSeat(next);
+  if (after !== null && after !== before) {
+    events.push({
+      t: 'log',
+      text: `${next.players[after]?.name ?? after} is now the host`,
+    });
+  }
+
+  return { state: next, events };
 }
 
 function concede(state: GameState, seat: SeatId): ReduceResult {

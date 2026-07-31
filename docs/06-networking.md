@@ -69,7 +69,12 @@ There are no accounts. Identity is a **seat token**:
 - If a seat is gone for more than 10 minutes and a majority of connected
   players vote to remove them, the seat is dropped from `turnOrder`. Their
   explorer stays on the board as an inert body holding its items.
-- The host role transfers to the longest-connected seat if the host drops.
+- The host role transfers if the host drops, to the earliest-joined seat that
+  is still connected, and returns to the original host when they come back.
+  The host is derived from connection state, never stored. (Originally
+  specified as "longest-connected"; see deviation 6 in
+  [11-progress](11-progress.md#deviations-from-the-plan) for why join order is
+  used instead.)
 
 Turn timers apply to _connected_ players too, but with a much longer default
 (10 minutes) and a visible countdown only in the last 60 seconds. Nobody
