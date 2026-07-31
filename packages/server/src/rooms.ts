@@ -23,6 +23,7 @@ import {
   type RoomCode,
   type RuleError,
   type SeatId,
+  type TurnTimers,
 } from '@bahoth/shared';
 import { createInitialState, getHostSeat, makeSeatId, reduce } from '@bahoth/engine';
 import type { Content } from '@bahoth/content';
@@ -64,14 +65,27 @@ export class RoomManager {
 
   // --- lifecycle -----------------------------------------------------------
 
+  /**
+   * Turn budgets are fixed per room at creation and recorded in the log
+   * header, so a room replayed after a config change reproduces the deadlines
+   * it actually ran with rather than today's.
+   */
+  private timers(): TurnTimers {
+    return {
+      turnMs: config.turnTimeoutMs,
+      disconnectedMs: config.disconnectTimeoutMs,
+    };
+  }
+
   create(): Room {
     const code = this.uniqueCode();
     const seed = crypto.randomInt(0, 2 ** 31);
+    const timers = this.timers();
     const room: Room = {
       code,
       seed,
       seats: new Map(),
-      state: createInitialState({ seed, content: this.content }),
+      state: createInitialState({ seed, content: this.content, timers }),
       log: [],
       createdAt: Date.now(),
       lastActivityAt: Date.now(),
@@ -89,6 +103,28 @@ export class RoomManager {
 
   count(): number {
     return this.rooms.size;
+  }
+
+  all(): Room[] {
+    return [...this.rooms.values()];
+  }
+
+  /**
+   * Whether this room has a deadline the engine needs to be told about — an
+   * unarmed turn clock, an expired turn, or an expired prompt.
+   *
+   * The server checks this cheaply on an interval and only then issues a
+   * `TICK`, so a room costs one logged action to arm a turn's clock and one
+   * more only if that turn actually times out. Ticking unconditionally would
+   * write a log line per room per second.
+   */
+  isTickDue(room: Room, now: number): boolean {
+    const s = room.state;
+    const pending = s.pending;
+    if (pending && pending.deadline !== null && now >= pending.deadline) return true;
+    if (s.phase !== 'explore' && s.phase !== 'haunt') return s.turnDeadline !== null;
+    if (s.activeSeat === null) return false;
+    return s.turnDeadline === null || now >= s.turnDeadline;
   }
 
   private uniqueCode(): RoomCode {
@@ -172,6 +208,14 @@ export class RoomManager {
       return { ok: false, error: result.error, events: [] };
     }
 
+    // Accepted but inert — the engine returns the state by reference when
+    // nothing changed. Logging it would grow the log without bound under the
+    // periodic tick, and touching lastActivityAt would make an empty room
+    // immortal.
+    if (result.state === room.state) {
+      return { ok: true, events: result.events };
+    }
+
     room.state = result.state;
     room.lastActivityAt = Date.now();
 
@@ -195,10 +239,17 @@ export class RoomManager {
   private openLog(room: Room, { fresh }: { fresh: boolean }): void {
     const file = this.logPath(room.code);
     if (fresh) {
-      // The header carries the seed, which replay needs and the actions do not.
+      // The header carries what replay needs and the actions do not: the seed,
+      // and the turn budgets this room was created with.
       fs.writeFileSync(
         file,
-        `${JSON.stringify({ header: true, seed: room.seed, code: room.code, createdAt: room.createdAt })}\n`,
+        `${JSON.stringify({
+          header: true,
+          seed: room.seed,
+          code: room.code,
+          createdAt: room.createdAt,
+          timers: room.state.timers,
+        })}\n`,
       );
     }
     room.logStream = fs.createWriteStream(file, { flags: 'a' });
@@ -228,6 +279,7 @@ export class RoomManager {
           seed?: number;
           code?: string;
           createdAt?: number;
+          timers?: TurnTimers;
         };
         if (!header.header || typeof header.seed !== 'number' || !header.code) {
           throw new Error('missing or malformed header');
@@ -241,7 +293,13 @@ export class RoomManager {
         }
 
         const entries = lines.slice(1).map((l) => JSON.parse(l) as LoggedAction);
-        let state = createInitialState({ seed: header.seed, content: this.content });
+        // Pre-timer logs have no header timers; today's config is the only
+        // sensible stand-in for those.
+        let state = createInitialState({
+          seed: header.seed,
+          content: this.content,
+          timers: header.timers ?? this.timers(),
+        });
         const seats = new Map<SeatId, Seat>();
 
         for (const entry of entries) {
