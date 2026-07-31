@@ -68,7 +68,11 @@ There are no accounts. Identity is a **seat token**:
   then ends the turn.
 - If a seat is gone for more than 10 minutes and a majority of connected
   players vote to remove them, the seat is dropped from `turnOrder`. Their
-  explorer stays on the board as an inert body holding its items.
+  explorer stays on the board as an inert body holding its items. The vote may
+  be cast as soon as the seat drops — gating the vote itself would need a clock
+  inside the legality check, which must stay pure — but it only takes effect
+  once the grace period has elapsed, which `TICK` decides. Reconnecting cancels
+  every vote outright.
 - The host role transfers if the host drops, to the earliest-joined seat that
   is still connected, and returns to the original host when they come back.
   The host is derived from connection state, never stored. (Originally

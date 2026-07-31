@@ -450,6 +450,84 @@ describe('the turn clock over the wire', () => {
   });
 });
 
+describe('the remove-player vote over the wire', () => {
+  it('drops a seat that never came back, once the table agrees and time passes', async () => {
+    const host = await connect('Ana');
+    host.send({ t: 'create' });
+    const room = await host.next('room');
+
+    const ben = await connect('Ben');
+    ben.send({ t: 'join', code: room.code });
+    await ben.next('welcome', (m) => m.seatId === 'seat_1');
+
+    const cal = await connect('Cal');
+    cal.send({ t: 'join', code: room.code });
+    await cal.next('welcome', (m) => m.seatId === 'seat_2');
+
+    // Four seats, so that removing one still leaves a legal three-player game.
+    const dot = await connect('Dot');
+    dot.send({ t: 'join', code: room.code });
+    await dot.next('welcome', (m) => m.seatId === 'seat_3');
+
+    const live = harness.rooms.get(room.code)!;
+
+    // Cal joins the lobby and vanishes without ever choosing an explorer, so
+    // the game cannot start: every seat needs one.
+    cal.close();
+    await host.waitForState((m) => m.state.players['seat_2']?.connected === false);
+
+    host.action({ t: 'CHOOSE_CHAR', seat: 'seat_0', charId: 'char.green_a' });
+    ben.action({ t: 'CHOOSE_CHAR', seat: 'seat_1', charId: 'char.red_a' });
+    dot.action({ t: 'CHOOSE_CHAR', seat: 'seat_3', charId: 'char.blue_a' });
+    await host.waitForState((m) => m.state.players['seat_3']?.charId !== null);
+
+    host.action({ t: 'START_GAME', seat: 'seat_0' });
+    const blocked = await host.next('error');
+    expect(blocked.code).toBe('ILLEGAL_ACTION');
+    expect(live.state.phase).toBe('lobby');
+
+    // Two of the three remaining seats vote: a strict majority.
+    host.action({ t: 'VOTE_REMOVE', seat: 'seat_0', target: 'seat_2', vote: true });
+    ben.action({ t: 'VOTE_REMOVE', seat: 'seat_1', target: 'seat_2', vote: true });
+    await host.waitForState((m) => (m.state.removeVotes['seat_2']?.length ?? 0) === 2);
+
+    // Still there: the votes are in, but the grace period is not up.
+    harness.gateway.sweepTimers(Date.now());
+    expect(live.state.players['seat_2']?.removed).toBe(false);
+
+    // Past the grace period, the seat goes.
+    harness.gateway.sweepTimers(Date.now() + live.state.timers.removeGraceMs + 1);
+    const removed = await host.waitForState(
+      (m) => m.state.players['seat_2']?.removed === true,
+    );
+    expect(removed.state.removeVotes['seat_2']).toBeUndefined();
+
+    // And the game the ghost seat was blocking can now start.
+    host.action({ t: 'START_GAME', seat: 'seat_0' });
+    const started = await host.waitForState((m) => m.state.phase === 'explore');
+    expect(started.state.turnOrder).toEqual(
+      expect.arrayContaining(['seat_0', 'seat_1', 'seat_3']),
+    );
+    expect(started.state.turnOrder).toHaveLength(3);
+    expect(started.state.turnOrder).not.toContain('seat_2');
+  });
+
+  it('refuses a vote against a seat that is still connected', async () => {
+    const host = await connect('Ana');
+    host.send({ t: 'create' });
+    const room = await host.next('room');
+
+    const ben = await connect('Ben');
+    ben.send({ t: 'join', code: room.code });
+    await ben.next('welcome', (m) => m.seatId === 'seat_1');
+
+    host.action({ t: 'VOTE_REMOVE', seat: 'seat_0', target: 'seat_1', vote: true });
+    const err = await host.next('error');
+    expect(err.code).toBe('ILLEGAL_ACTION');
+    expect(err.message).toMatch(/still here/i);
+  });
+});
+
 describe('redaction over the wire', () => {
   it('never sends the rng seed to a client', async () => {
     const host = await connect('Ana');

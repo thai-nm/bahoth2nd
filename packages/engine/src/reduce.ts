@@ -25,6 +25,7 @@ import {
 import type { Character, Content } from '@bahoth/content';
 import { checkInvariants } from './invariants.js';
 import {
+  activePlayers,
   canStart,
   getHostSeat,
   isCharacterTaken,
@@ -96,8 +97,10 @@ function dispatch(state: GameState, action: GameAction, content: Content): Reduc
       return startGame(state, action.seat);
     case 'END_TURN':
       return endTurn(state, action.seat);
+    case 'VOTE_REMOVE':
+      return voteRemove(state, action.seat, action.target, action.vote);
     case 'DISCONNECT':
-      return setConnected(state, action.seat, false);
+      return setConnected(state, action.seat, false, action.at);
     case 'RECONNECT':
       return setConnected(state, action.seat, true);
     case 'TICK':
@@ -153,6 +156,8 @@ function makePlayer(seatId: SeatId, name: string): PlayerState {
     isTraitor: false,
     isDead: false,
     connected: true,
+    disconnectedAt: null,
+    removed: false,
     hasAttackedThisTurn: false,
     flags: {},
   };
@@ -223,7 +228,7 @@ function startGame(state: GameState, seat: SeatId): ReduceResult {
   if (getHostSeat(state) !== seat)
     return fail('NOT_HOST', 'Only the host can start the game');
 
-  const players = Object.values(state.players);
+  const players = activePlayers(state);
   if (players.length < MIN_PLAYERS) {
     return fail('NOT_ENOUGH_PLAYERS', `Need at least ${MIN_PLAYERS} players`);
   }
@@ -244,7 +249,7 @@ function startGame(state: GameState, seat: SeatId): ReduceResult {
   // by CHOOSE_CHAR. Real starting positions and the Entrance Hall arrive in M2;
   // until then players have no location, which the invariants allow outside
   // explore/haunt.
-  const nextPlayers: Record<SeatId, PlayerState> = {};
+  const nextPlayers: Record<SeatId, PlayerState> = { ...state.players };
   for (const p of players) {
     nextPlayers[p.seatId] = { ...p };
   }
@@ -310,16 +315,30 @@ function endTurn(state: GameState, seat: SeatId): ReduceResult {
 
 // --- connection ------------------------------------------------------------
 
-function setConnected(state: GameState, seat: SeatId, connected: boolean): ReduceResult {
+function setConnected(
+  state: GameState,
+  seat: SeatId,
+  connected: boolean,
+  at?: number,
+): ReduceResult {
   const player = state.players[seat];
   if (!player) return fail('UNKNOWN_SEAT', `No such seat: ${seat}`);
   if (player.connected === connected) {
     return { state, events: [] };
   }
 
+  // Coming back cancels every vote against you outright. Half a vote left
+  // standing from an outage an hour ago should not help remove you later.
+  const removeVotes = { ...state.removeVotes };
+  if (connected) delete removeVotes[seat];
+
   const next: GameState = {
     ...state,
-    players: { ...state.players, [seat]: { ...player, connected } },
+    removeVotes,
+    players: {
+      ...state.players,
+      [seat]: { ...player, connected, disconnectedAt: connected ? null : (at ?? null) },
+    },
     // The active seat's connection state chooses which budget applies, so a
     // drop or return mid-turn disarms the clock and the next TICK re-arms it
     // with the right one. Dropping shortens the turn to 90s; coming back
@@ -338,6 +357,121 @@ function setConnected(state: GameState, seat: SeatId, connected: boolean): Reduc
     events.push({
       t: 'log',
       text: `${next.players[after]?.name ?? after} is now the host`,
+    });
+  }
+
+  return { state: next, events };
+}
+
+/**
+ * Cast or withdraw a vote to remove an absent seat.
+ *
+ * Voting is deliberately clock-free so legality stays pure: the table may vote
+ * the moment somebody drops, but the vote only *takes effect* once the grace
+ * period has passed, which `tick` decides. See `resolveRemovals`.
+ */
+function voteRemove(
+  state: GameState,
+  seat: SeatId,
+  target: SeatId,
+  vote: boolean,
+): ReduceResult {
+  if (state.phase === 'game_over') return fail('GAME_OVER', 'The game is already over');
+
+  const voter = state.players[seat];
+  if (!voter) return fail('UNKNOWN_SEAT', `No such seat: ${seat}`);
+  const victim = state.players[target];
+  if (!victim) return fail('UNKNOWN_SEAT', `No such seat: ${target}`);
+
+  if (seat === target) return fail('ILLEGAL_MOVE', 'You cannot vote to remove yourself');
+  if (voter.removed) return fail('ILLEGAL_MOVE', 'A removed seat does not vote');
+  if (victim.removed) return fail('ILLEGAL_MOVE', `${victim.name} is already removed`);
+  if (victim.connected) {
+    return fail('ILLEGAL_MOVE', `${victim.name} is still here`);
+  }
+
+  const current = state.removeVotes[target] ?? [];
+  const has = current.includes(seat);
+  if (has === vote) return { state, events: [] };
+
+  const nextVoters = vote ? [...current, seat].sort() : current.filter((s) => s !== seat);
+  const removeVotes = { ...state.removeVotes };
+  if (nextVoters.length === 0) delete removeVotes[target];
+  else removeVotes[target] = nextVoters;
+
+  return {
+    state: { ...state, removeVotes },
+    events: [
+      {
+        t: 'log',
+        text: vote
+          ? `${voter.name} voted to remove ${victim.name} (${nextVoters.length}/${votesNeeded(state, target)})`
+          : `${voter.name} withdrew their vote to remove ${victim.name}`,
+      },
+    ],
+  };
+}
+
+/** Seats entitled to vote on removing `target`: present, playing, not the target. */
+function eligibleVoters(state: GameState, target: SeatId): SeatId[] {
+  return Object.values(state.players)
+    .filter((p) => p.seatId !== target && p.connected && !p.removed && !p.isDead)
+    .map((p) => p.seatId);
+}
+
+/** A strict majority of those entitled to vote. */
+function votesNeeded(state: GameState, target: SeatId): number {
+  return Math.floor(eligibleVoters(state, target).length / 2) + 1;
+}
+
+/**
+ * Apply any removal whose votes have carried AND whose grace period has run
+ * out. Both conditions are checked here, at tick time, rather than when the
+ * vote is cast — the engine has no clock of its own, and the grace period is
+ * the whole point of the feature.
+ */
+function resolveRemovals(state: GameState, now: number): ReduceResult {
+  let next = state;
+  const events: GameEvent[] = [];
+
+  for (const target of Object.keys(state.removeVotes)) {
+    const victim = next.players[target];
+    const voters = (next.removeVotes[target] ?? []).filter((s) => {
+      const v = next.players[s];
+      return v?.connected === true && !v.removed && !v.isDead;
+    });
+
+    if (!victim || victim.removed || victim.connected) continue;
+    if (victim.disconnectedAt === null) continue;
+    if (now - victim.disconnectedAt < next.timers.removeGraceMs) continue;
+    if (voters.length < votesNeeded(next, target)) continue;
+
+    const removeVotes = { ...next.removeVotes };
+    delete removeVotes[target];
+
+    // The explorer stays exactly where it is, holding what it holds. It simply
+    // stops taking turns (docs/06-networking.md#disconnection-behaviour).
+    next = {
+      ...next,
+      removeVotes,
+      players: { ...next.players, [target]: { ...victim, removed: true } },
+      turnOrder: next.turnOrder.filter((s) => s !== target),
+    };
+
+    if (next.activeSeat === target) {
+      // nextSeatInOrder needs a seat still in the order to walk from, so this
+      // is resolved against the pre-removal order.
+      const following = nextSeatInOrder(state, target);
+      next = {
+        ...next,
+        activeSeat: following === target ? (next.turnOrder[0] ?? null) : following,
+        turnDeadline: null,
+      };
+    }
+
+    events.push({
+      t: 'log',
+      text: `${victim.name} was removed by vote after leaving the game`,
     });
   }
 
@@ -418,6 +552,21 @@ function turnBudget(state: GameState): number {
 function tick(state: GameState, now: number): ReduceResult {
   let next = state;
   const events: GameEvent[] = [];
+
+  // A seat that dropped before `at` was recorded (an action log written by an
+  // older build) gets its clock started here rather than becoming unremovable.
+  for (const p of Object.values(next.players)) {
+    if (!p.connected && p.disconnectedAt === null) {
+      next = {
+        ...next,
+        players: { ...next.players, [p.seatId]: { ...p, disconnectedAt: now } },
+      };
+    }
+  }
+
+  const removals = resolveRemovals(next, now);
+  next = removals.state;
+  events.push(...removals.events);
 
   const pending = next.pending;
   if (pending && pending.deadline !== null && now >= pending.deadline) {

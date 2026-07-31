@@ -194,8 +194,10 @@ relevant document, not into this list.
    that is actually redistributable.
 4. **Do we support 2-player games?** (M4). Not in the printed rules; several
    haunts break. Current plan: minimum 3 seats, with a clear message.
-5. **Reconnect grace before a seat can be voted out** (M1). 10 minutes is a
-   guess.
+5. ~~**Reconnect grace before a seat can be voted out** (M1).~~ Settled in M1:
+   10 minutes, configurable via `REMOVE_GRACE_SECONDS`. Still a guess, but now
+   a guess with a dial on it. The vote may be cast at any time; only its effect
+   waits for the grace period.
 6. **Does the client need the tile deck count?** (M1 redaction). Showing
    "18 rooms left" is a nice touch and leaks nothing meaningful. Probably yes.
 7. **Rotation prompt when only one rotation is legal** (M2). Auto-apply, or
