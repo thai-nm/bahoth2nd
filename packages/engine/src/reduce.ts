@@ -22,7 +22,7 @@ import {
   type RuleErrorCode,
   type SeatId,
 } from '@bahoth/shared';
-import type { Content } from '@bahoth/content';
+import type { Character, Content } from '@bahoth/content';
 import { checkInvariants } from './invariants.js';
 import {
   canStart,
@@ -116,9 +116,21 @@ function dispatch(state: GameState, action: GameAction, content: Content): Reduc
 
 // --- lobby -----------------------------------------------------------------
 
-function makePlayer(seatId: SeatId, name: string): PlayerState {
+/**
+ * Trait indices for a chosen character, or all-zero for a seat with none.
+ *
+ * Index 0 is the skull — the death slot — so an explorer must never sit there
+ * while alive. The starting slot is printed on the character card and lives in
+ * `character.start` (docs/02-rules-model.md#22-explorers-and-traits).
+ */
+function startingTraits(character: Character | undefined): PlayerState['traits'] {
   const traits = {} as PlayerState['traits'];
-  for (const t of TRAITS) traits[t] = 0;
+  for (const t of TRAITS) traits[t] = character?.start[t] ?? 0;
+  return traits;
+}
+
+function makePlayer(seatId: SeatId, name: string): PlayerState {
+  const traits = startingTraits(undefined);
   return {
     seatId,
     name,
@@ -167,8 +179,9 @@ function chooseChar(
   const player = state.players[seat];
   if (!player) return fail('UNKNOWN_SEAT', `No such seat: ${seat}`);
 
+  let character: Character | undefined;
   if (charId !== null) {
-    const character = content.charactersById[charId];
+    character = content.charactersById[charId];
     if (!character) return fail('UNKNOWN_ACTION', `No such character: ${charId}`);
     if (isCharacterTaken(state, charId, seat)) {
       return fail('CHARACTER_TAKEN', `${character.name} is already taken`);
@@ -181,10 +194,16 @@ function chooseChar(
     }
   }
 
+  // Traits are seeded here rather than at START_GAME so that a seat's indices
+  // are never out of step with its character — clearing the choice puts them
+  // back to zero, and no state where a character is chosen has skull indices.
   return {
     state: {
       ...state,
-      players: { ...state.players, [seat]: { ...player, charId } },
+      players: {
+        ...state.players,
+        [seat]: { ...player, charId, traits: startingTraits(character) },
+      },
     },
     events: [{ t: 'char_chosen', seat, charId }],
   };
@@ -212,9 +231,10 @@ function startGame(state: GameState, seat: SeatId): ReduceResult {
     players.map((p) => p.seatId),
   );
 
-  // Trait indices come from each character's printed starting slot. Real
-  // starting positions and the Entrance Hall arrive in M2; until then players
-  // have no location, which the invariants allow outside explore/haunt.
+  // Trait indices are already set from each character's printed starting slot
+  // by CHOOSE_CHAR. Real starting positions and the Entrance Hall arrive in M2;
+  // until then players have no location, which the invariants allow outside
+  // explore/haunt.
   const nextPlayers: Record<SeatId, PlayerState> = {};
   for (const p of players) {
     nextPlayers[p.seatId] = { ...p };

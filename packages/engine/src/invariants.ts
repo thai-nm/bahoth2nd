@@ -75,7 +75,9 @@ export function checkInvariants(state: GameState): string[] {
     }
   }
 
-  // 5. Trait indices are integers in [0, 7].
+  // 5. Trait indices are integers in [0, 7], and a living explorer is never on
+  //    index 0 — that slot is the skull. Range alone is not enough: all-zero
+  //    traits are in range and mean every explorer is nominally dead.
   for (const p of Object.values(state.players)) {
     for (const trait of TRAITS) {
       const v = p.traits[trait];
@@ -83,6 +85,10 @@ export function checkInvariants(state: GameState): string[] {
         problems.push(
           `player ${p.seatId} has ${trait} index ${v}, expected an integer in [0,7]`,
         );
+        continue;
+      }
+      if (v === 0 && p.charId !== null && !p.isDead) {
+        problems.push(`living player ${p.seatId} has ${trait} on the skull (index 0)`);
       }
     }
   }

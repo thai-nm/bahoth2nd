@@ -3,8 +3,9 @@ import { fixtureContent } from '@bahoth/content';
 import { playGame, replay, startedGame } from './testing.js';
 import { reduce } from './reduce.js';
 import { makeSeatId } from './setup.js';
-import { getLegalActions } from './selectors.js';
-import type { GameAction } from '@bahoth/shared';
+import { getLegalActions, traitValue } from './selectors.js';
+import { checkInvariants } from './invariants.js';
+import { TRAITS, type GameAction } from '@bahoth/shared';
 
 const content = fixtureContent();
 
@@ -63,6 +64,36 @@ describe('lobby', () => {
     });
     expect(g.errors).toHaveLength(1);
     expect(g.errors[0]?.error.code).toBe('CHARACTER_TAKEN');
+  });
+
+  it('seeds trait indices from the chosen character, never the skull', () => {
+    const character = content.characters[0]!;
+    const g = playGame({
+      players: ['Ana', 'Ben', 'Cal'],
+      actions: [{ t: 'CHOOSE_CHAR', seat: 'seat_0', charId: character.id }],
+    });
+    expect(g.errors).toEqual([]);
+    expect(g.state.players['seat_0']?.traits).toEqual(character.start);
+    for (const trait of TRAITS) {
+      expect(g.state.players['seat_0']?.traits[trait]).toBeGreaterThan(0);
+    }
+  });
+
+  it('returns traits to zero when a character is cleared', () => {
+    const g = playGame({
+      players: ['Ana', 'Ben', 'Cal'],
+      actions: [
+        { t: 'CHOOSE_CHAR', seat: 'seat_0', charId: content.characters[0]!.id },
+        { t: 'CHOOSE_CHAR', seat: 'seat_0', charId: null },
+      ],
+    });
+    expect(g.errors).toEqual([]);
+    expect(g.state.players['seat_0']?.traits).toEqual({
+      speed: 0,
+      might: 0,
+      sanity: 0,
+      knowledge: 0,
+    });
   });
 
   it('lets a player clear and re-pick a character', () => {
@@ -141,6 +172,30 @@ describe('starting a game', () => {
       orders.add(startedGame({ seed }).state.turnOrder.join(','));
     }
     expect(orders.size).toBeGreaterThan(1);
+  });
+
+  it('carries real trait values into the started game', () => {
+    const g = startedGame({ players: ['Ana', 'Ben', 'Cal'] });
+    for (const player of Object.values(g.state.players)) {
+      for (const trait of TRAITS) {
+        // A printed trait value, not the zero an uninitialised index yields.
+        expect(traitValue(g.state, player.seatId, trait, content)).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('is rejected by the invariants if an explorer sits on the skull', () => {
+    const g = startedGame();
+    const seat = g.state.turnOrder[0]!;
+    const player = g.state.players[seat]!;
+    const skulled = {
+      ...g.state,
+      players: {
+        ...g.state.players,
+        [seat]: { ...player, traits: { ...player.traits, might: 0 } },
+      },
+    };
+    expect(checkInvariants(skulled)).toContainEqual(expect.stringContaining('skull'));
   });
 
   it('seats every player exactly once in turn order', () => {
