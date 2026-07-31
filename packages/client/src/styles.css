@@ -255,6 +255,15 @@ h2 {
 .seat__name {
   font-weight: 600;
 }
+.seat__host {
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
 .seat__char {
   margin-left: auto;
   display: flex;

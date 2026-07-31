@@ -1,5 +1,5 @@
 import { useStore } from '../store.js';
-import { getLegalActions } from '@bahoth/engine';
+import { getHostSeat, getLegalActions } from '@bahoth/engine';
 import type { GameAction } from '@bahoth/shared';
 
 export function Lobby() {
@@ -28,6 +28,7 @@ export function Lobby() {
   // only re-sent on join/leave, so its charId goes stale the moment someone
   // picks an explorer, while every snapshot carries the current truth.
   const players = Object.values(state.players);
+  const hostSeat = getHostSeat(state);
 
   return (
     <main className="screen">
@@ -44,7 +45,11 @@ export function Lobby() {
           disabled={!canStart || pending}
           onClick={() => send({ t: 'START_GAME', seat: seatId })}
           title={
-            canStart ? undefined : 'Every player needs an explorer, and 3 players minimum'
+            canStart
+              ? undefined
+              : seatId === hostSeat
+                ? 'Every player needs an explorer, and 3 players minimum'
+                : 'Only the host can start the game'
           }
         >
           Start game
@@ -63,6 +68,7 @@ export function Lobby() {
               >
                 <span className={s.connected ? 'dot dot--on' : 'dot'} aria-hidden />
                 <span className="seat__name">{s.name}</span>
+                {s.seatId === hostSeat && <span className="seat__host">host</span>}
                 <span className="seat__char">
                   {character ? (
                     <>

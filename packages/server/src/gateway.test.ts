@@ -305,6 +305,49 @@ describe('a full M0 game', () => {
   });
 });
 
+describe('host transfer over the wire', () => {
+  it('hands the room to the next seat when the host drops, and back on return', async () => {
+    const host = await connect('Ana');
+    host.send({ t: 'create' });
+    const room = await host.next('room');
+    expect(room.hostSeatId).toBe('seat_0');
+
+    const ben = await connect('Ben');
+    ben.send({ t: 'join', code: room.code });
+    await ben.next('welcome', (m) => m.seatId === 'seat_1');
+
+    const cal = await connect('Cal');
+    cal.send({ t: 'join', code: room.code });
+    await cal.next('welcome', (m) => m.seatId === 'seat_2');
+
+    host.action({ t: 'CHOOSE_CHAR', seat: 'seat_0', charId: 'char.green_a' });
+    ben.action({ t: 'CHOOSE_CHAR', seat: 'seat_1', charId: 'char.red_a' });
+    cal.action({ t: 'CHOOSE_CHAR', seat: 'seat_2', charId: 'char.blue_a' });
+    await ben.waitForState((m) =>
+      Object.values(m.state.players).every((p) => p.charId !== null),
+    );
+
+    // The host walks out of the room.
+    const hostToken = host.token();
+    host.close();
+
+    const transferred = await ben.next('room', (m) => m.hostSeatId === 'seat_1');
+    expect(transferred.hostSeatId).toBe('seat_1');
+
+    // The room is not stranded: the new host can start the game.
+    ben.action({ t: 'START_GAME', seat: 'seat_1' });
+    const started = await ben.waitForState((m) => m.state.phase === 'explore');
+    expect(started.state.turnOrder).toHaveLength(3);
+
+    // And the role goes back when the original host reconnects.
+    const hostAgain = await connect('Ana', hostToken);
+    hostAgain.send({ t: 'join', code: room.code });
+    await hostAgain.next('welcome', (m) => m.seatId === 'seat_0');
+    const returned = await ben.next('room', (m) => m.hostSeatId === 'seat_0');
+    expect(returned.hostSeatId).toBe('seat_0');
+  });
+});
+
 describe('redaction over the wire', () => {
   it('never sends the rng seed to a client', async () => {
     const host = await connect('Ana');

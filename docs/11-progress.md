@@ -86,7 +86,7 @@ Recorded because each one was invisible to the tests that existed at the time.
 | Content pipeline: schemas, loader, fixtures, hash, join-time check, `GET /api/content` | ✅ Done                       |
 | Character select in the lobby                                                          | ✅ Done                       |
 | Trait tracks in state as indices                                                       | ✅ Done                       |
-| Host transfer when the host drops                                                      | ❌ Not done                   |
+| Host transfer when the host drops                                                      | ✅ Done                       |
 | Turn timers and the `TICK` action                                                      | ❌ Not done                   |
 | Disconnect handling and the remove-player vote                                         | 🟡 Disconnect yes, vote no    |
 
@@ -96,13 +96,6 @@ Recorded because each one was invisible to the tests that existed at the time.
 
 Open defects in code that has shipped to a branch. Each one has a milestone by
 which it must be fixed, and a note on why it is not visible yet.
-
-### D2 — Host transfer does not consider connection state _(M1)_
-
-`getHostSeat` returns the lowest seat id by sort order and ignores whether that
-seat is connected. If the host drops, nobody can start the game.
-[06-networking](06-networking.md#disconnection-behaviour) specifies transfer to
-the longest-connected seat.
 
 ### D3 — Turn timers are declared but never read _(M1)_
 
@@ -125,6 +118,19 @@ A seat that never returns cannot be removed from `turnOrder`.
 
 Kept rather than deleted: each one is a note on a failure mode worth
 recognising again.
+
+### D2 — Host transfer ignored connection state _(fixed 2026-08-01)_
+
+`getHostSeat` returned the lowest seat id by sort order regardless of whether
+that seat was connected, so a host who dropped took the lobby with them —
+nobody else could start the game, and there was no way to recover short of
+making a new room.
+
+**Fixed by** deriving the host as the earliest-joined seat that is currently
+_connected_, falling back to the earliest seat when nobody is (which is exactly
+the state crash recovery produces). Nothing is stored: the host is still
+derived, so it needs no reconciliation. See deviation 6 for why this is not
+literally "longest-connected".
 
 ### D1 — Explorers started at the skull _(fixed 2026-08-01)_
 
@@ -156,13 +162,14 @@ which would have caught the original bug at the first reduction.
 Deliberate departures from the design docs, recorded so they are decisions
 rather than drift.
 
-| #   | Deviation                                                                             | Why                                                                                                                                      |
-| --- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Redaction test written in M0, not M1                                                  | The deck plumbing already existed; shipping a snapshot path without the leak test was not worth the ordering purity.                     |
-| 2   | `START_GAME` goes straight to `explore`, skipping `setup`                             | Characters are chosen in the lobby, so `setup` had nothing to do. The phase remains declared for later use.                              |
-| 3   | Invariant 1 keys off board emptiness, not a phase list                                | "Every living player is on the board once the board exists" stays correct after M2 places tiles; a phase list would have needed editing. |
-| 4   | Property tests use our own seeded RNG, not fast-check                                 | Same properties, no extra dependency, failures reproducible from a printed seed. Revisit if shrinking becomes worth it.                  |
-| 5   | Vite 8 / vitest 4 / zod 4 / React 19 instead of the versions implied at planning time | Starting fresh, the older majors carried a known dev-server advisory. Current majors audit clean.                                        |
+| #   | Deviation                                                                             | Why                                                                                                                                                                                                                                                                                                  |
+| --- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Redaction test written in M0, not M1                                                  | The deck plumbing already existed; shipping a snapshot path without the leak test was not worth the ordering purity.                                                                                                                                                                                 |
+| 2   | `START_GAME` goes straight to `explore`, skipping `setup`                             | Characters are chosen in the lobby, so `setup` had nothing to do. The phase remains declared for later use.                                                                                                                                                                                          |
+| 3   | Invariant 1 keys off board emptiness, not a phase list                                | "Every living player is on the board once the board exists" stays correct after M2 places tiles; a phase list would have needed editing.                                                                                                                                                             |
+| 4   | Property tests use our own seeded RNG, not fast-check                                 | Same properties, no extra dependency, failures reproducible from a printed seed. Revisit if shrinking becomes worth it.                                                                                                                                                                              |
+| 5   | Vite 8 / vitest 4 / zod 4 / React 19 instead of the versions implied at planning time | Starting fresh, the older majors carried a known dev-server advisory. Current majors audit clean.                                                                                                                                                                                                    |
+| 6   | The host is the earliest-**joined** connected seat, not the longest-**connected** one | "Longest-connected" needs a clock, and the engine may not read one. Join order is already encoded in the seat id, so this is deterministic and free. It also behaves better: the role returns to the original host when they reconnect instead of drifting to whoever has been online longest since. |
 
 ---
 
