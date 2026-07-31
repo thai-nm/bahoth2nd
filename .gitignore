@@ -1,0 +1,16 @@
+node_modules/
+dist/
+dist-types/
+*.tsbuildinfo
+.DS_Store
+*.log
+
+# Real game content is not redistributable — see docs/01-overview.md.
+# Placeholder fixtures live in packages/content/fixtures and ARE committed.
+/content/
+
+# Per-room action logs
+/data/
+
+.env
+.env.local

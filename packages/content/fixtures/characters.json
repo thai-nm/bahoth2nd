@@ -1,0 +1,149 @@
+{
+  "_comment": "PLACEHOLDER CONTENT. Invented names and stats, not the printed ones. Real content is supplied by the operator in CONTENT_DIR and is gitignored. See docs/01-overview.md#intellectual-property-position.",
+  "characters": [
+    {
+      "id": "char.green_a",
+      "name": "The Athlete",
+      "colour": "green",
+      "tracks": {
+        "speed": [null, 2, 3, 4, 4, 5, 6, 8],
+        "might": [null, 3, 4, 5, 5, 6, 7, 8],
+        "sanity": [null, 1, 2, 3, 4, 5, 6, 7],
+        "knowledge": [null, 1, 2, 3, 4, 5, 6, 7]
+      },
+      "start": { "speed": 4, "might": 4, "sanity": 3, "knowledge": 3 }
+    },
+    {
+      "id": "char.green_b",
+      "name": "The Sprinter",
+      "colour": "green",
+      "tracks": {
+        "speed": [null, 3, 4, 5, 6, 6, 7, 8],
+        "might": [null, 2, 3, 3, 4, 5, 6, 7],
+        "sanity": [null, 2, 3, 3, 4, 5, 6, 7],
+        "knowledge": [null, 1, 2, 3, 4, 5, 6, 7]
+      },
+      "start": { "speed": 5, "might": 3, "sanity": 3, "knowledge": 3 }
+    },
+    {
+      "id": "char.red_a",
+      "name": "The Mechanic",
+      "colour": "red",
+      "tracks": {
+        "speed": [null, 2, 3, 4, 4, 5, 6, 7],
+        "might": [null, 2, 3, 4, 5, 5, 6, 7],
+        "sanity": [null, 2, 3, 4, 4, 5, 6, 7],
+        "knowledge": [null, 3, 4, 4, 5, 6, 7, 8]
+      },
+      "start": { "speed": 3, "might": 3, "sanity": 4, "knowledge": 4 }
+    },
+    {
+      "id": "char.red_b",
+      "name": "The Fortune Teller",
+      "colour": "red",
+      "tracks": {
+        "speed": [null, 2, 3, 3, 4, 5, 6, 7],
+        "might": [null, 1, 2, 3, 4, 5, 6, 7],
+        "sanity": [null, 4, 4, 5, 5, 6, 7, 8],
+        "knowledge": [null, 3, 4, 4, 5, 6, 7, 8]
+      },
+      "start": { "speed": 3, "might": 3, "sanity": 5, "knowledge": 4 }
+    },
+    {
+      "id": "char.blue_a",
+      "name": "The Student",
+      "colour": "blue",
+      "tracks": {
+        "speed": [null, 3, 4, 4, 5, 5, 6, 7],
+        "might": [null, 2, 2, 3, 4, 5, 6, 7],
+        "sanity": [null, 2, 3, 4, 5, 5, 6, 7],
+        "knowledge": [null, 3, 4, 5, 5, 6, 7, 8]
+      },
+      "start": { "speed": 4, "might": 3, "sanity": 3, "knowledge": 5 }
+    },
+    {
+      "id": "char.blue_b",
+      "name": "The Priest",
+      "colour": "blue",
+      "tracks": {
+        "speed": [null, 1, 2, 3, 4, 5, 6, 7],
+        "might": [null, 2, 3, 3, 4, 5, 6, 7],
+        "sanity": [null, 4, 5, 5, 6, 6, 7, 8],
+        "knowledge": [null, 3, 3, 4, 5, 6, 7, 8]
+      },
+      "start": { "speed": 2, "might": 3, "sanity": 5, "knowledge": 4 }
+    },
+    {
+      "id": "char.white_a",
+      "name": "The Heiress",
+      "colour": "white",
+      "tracks": {
+        "speed": [null, 3, 4, 4, 5, 6, 7, 8],
+        "might": [null, 1, 2, 3, 4, 5, 6, 7],
+        "sanity": [null, 2, 3, 4, 4, 5, 6, 7],
+        "knowledge": [null, 2, 3, 4, 5, 5, 6, 7]
+      },
+      "start": { "speed": 4, "might": 2, "sanity": 4, "knowledge": 4 }
+    },
+    {
+      "id": "char.white_b",
+      "name": "The Runaway",
+      "colour": "white",
+      "tracks": {
+        "speed": [null, 3, 4, 5, 5, 6, 7, 8],
+        "might": [null, 2, 3, 4, 4, 5, 6, 7],
+        "sanity": [null, 3, 3, 4, 5, 5, 6, 7],
+        "knowledge": [null, 2, 3, 3, 4, 5, 6, 7]
+      },
+      "start": { "speed": 4, "might": 4, "sanity": 4, "knowledge": 3 }
+    },
+    {
+      "id": "char.purple_a",
+      "name": "The Child",
+      "colour": "purple",
+      "tracks": {
+        "speed": [null, 2, 3, 4, 5, 6, 7, 8],
+        "might": [null, 1, 2, 2, 3, 4, 5, 6],
+        "sanity": [null, 3, 4, 4, 5, 6, 7, 8],
+        "knowledge": [null, 2, 3, 4, 4, 5, 6, 7]
+      },
+      "start": { "speed": 4, "might": 2, "sanity": 4, "knowledge": 3 }
+    },
+    {
+      "id": "char.purple_b",
+      "name": "The Diver",
+      "colour": "purple",
+      "tracks": {
+        "speed": [null, 3, 3, 4, 5, 6, 7, 8],
+        "might": [null, 2, 3, 3, 4, 5, 6, 7],
+        "sanity": [null, 2, 3, 4, 5, 5, 6, 7],
+        "knowledge": [null, 2, 3, 4, 4, 5, 6, 7]
+      },
+      "start": { "speed": 4, "might": 3, "sanity": 4, "knowledge": 3 }
+    },
+    {
+      "id": "char.yellow_a",
+      "name": "The Scout",
+      "colour": "yellow",
+      "tracks": {
+        "speed": [null, 2, 3, 4, 4, 5, 6, 7],
+        "might": [null, 3, 3, 4, 5, 6, 7, 8],
+        "sanity": [null, 2, 3, 4, 4, 5, 6, 7],
+        "knowledge": [null, 2, 3, 4, 5, 5, 6, 7]
+      },
+      "start": { "speed": 4, "might": 4, "sanity": 3, "knowledge": 4 }
+    },
+    {
+      "id": "char.yellow_b",
+      "name": "The Professor",
+      "colour": "yellow",
+      "tracks": {
+        "speed": [null, 1, 2, 3, 4, 5, 6, 7],
+        "might": [null, 1, 2, 3, 4, 5, 6, 7],
+        "sanity": [null, 3, 4, 4, 5, 6, 7, 8],
+        "knowledge": [null, 4, 5, 5, 6, 6, 7, 8]
+      },
+      "start": { "speed": 3, "might": 2, "sanity": 4, "knowledge": 5 }
+    }
+  ]
+}
