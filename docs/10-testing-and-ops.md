@@ -105,6 +105,7 @@ ROOM_TTL_HOURS=4
 TURN_TIMEOUT_SECONDS=600        # baked into each room at creation
 DISCONNECT_TIMEOUT_SECONDS=90   # ditto; a room never changes budget mid-game
 TICK_INTERVAL_MS=1000           # how often rooms are checked for a due deadline
+REMOVE_GRACE_SECONDS=600        # absence before a majority can vote a seat out
 LOG_LEVEL=info
 ```
 

@@ -200,6 +200,11 @@ input:focus-visible {
 .btn--ghost {
   background: none;
 }
+.btn--tiny {
+  padding: 2px 8px;
+  font-size: 12px;
+  background: none;
+}
 .btn:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;

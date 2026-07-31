@@ -118,6 +118,35 @@ export function checkInvariants(state: GameState): string[] {
     problems.push(`turnDeadline is armed during phase ${state.phase}`);
   }
 
+  // 6c. A seat voted out is out of the rotation entirely — still on the board
+  //     as a body, but never in turnOrder and never the active seat.
+  for (const p of Object.values(state.players)) {
+    if (!p.removed) continue;
+    if (state.turnOrder.includes(p.seatId)) {
+      problems.push(`removed player ${p.seatId} is still in turnOrder`);
+    }
+    if (state.activeSeat === p.seatId) {
+      problems.push(`removed player ${p.seatId} is the active seat`);
+    }
+  }
+
+  // 6d. Votes refer to real seats, and nobody votes twice or votes on
+  //     themselves.
+  for (const [target, voters] of Object.entries(state.removeVotes)) {
+    if (!state.players[target]) {
+      problems.push(`removeVotes targets unknown seat ${target}`);
+    }
+    if (new Set(voters).size !== voters.length) {
+      problems.push(`removeVotes for ${target} contains a duplicate voter`);
+    }
+    for (const voter of voters) {
+      if (!state.players[voter]) {
+        problems.push(`removeVotes for ${target} has unknown voter ${voter}`);
+      }
+      if (voter === target) problems.push(`seat ${target} voted to remove itself`);
+    }
+  }
+
   // 7. A pending prompt targets a real seat.
   if (state.pending && !state.players[state.pending.seatId]) {
     problems.push(`pending prompt targets unknown seat ${state.pending.seatId}`);
