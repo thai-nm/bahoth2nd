@@ -384,6 +384,15 @@ h2 {
   font-family: ui-monospace, monospace;
   opacity: 0.6;
 }
+.topbar__clock {
+  font-family: ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.topbar__clock--urgent {
+  color: var(--danger);
+  font-weight: 600;
+}
 
 .game__body {
   display: grid;

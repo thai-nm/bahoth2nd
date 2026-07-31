@@ -29,6 +29,21 @@ export interface RngState {
   counter: number;
 }
 
+/**
+ * Turn clock budgets, fixed when the room is created and carried in state.
+ *
+ * They live here rather than being read from server config at tick time so
+ * that replaying an action log reproduces the same deadlines — a room whose
+ * timers changed under it would diverge from its own log. The log header
+ * records them alongside the seed.
+ */
+export interface TurnTimers {
+  /** Budget for a connected player's turn. */
+  turnMs: number;
+  /** The shorter budget once the active seat has dropped. */
+  disconnectedMs: number;
+}
+
 export type FlagValue = number | boolean | string;
 export type Flags = Record<string, FlagValue>;
 
@@ -138,6 +153,13 @@ export interface GameState {
   turnOrder: SeatId[];
   activeSeat: SeatId | null;
   round: number;
+  timers: TurnTimers;
+  /**
+   * ms epoch at which the active seat's turn expires, or null when no turn
+   * clock is running. Armed by the first `TICK` of a turn — the engine never
+   * reads a clock, so it cannot set this until a `TICK` tells it the time.
+   */
+  turnDeadline: number | null;
   board: BoardState;
   decks: Record<DeckKind, DeckState>;
   omensDrawn: number;
