@@ -96,7 +96,11 @@ and CI passes without any of it. See
   secrets that are never written to disk), so every player must re-claim a seat
   by rejoining.
 
-## Roadmap
+## Roadmap and current status
 
-M0 done. Next is [M1](docs/09-roadmap.md#m1--seats-identity-redaction) and then
-[M2](docs/09-roadmap.md#m2--the-house), which brings the actual house.
+M0 is complete; M1 is partially done and has open defects, including one that
+leaves every explorer's trait indices at the skull.
+
+**[docs/11-progress.md](docs/11-progress.md) is the authoritative status.** The
+other design docs describe the system as intended, not as it currently exists —
+read the progress doc before trusting them about what works.

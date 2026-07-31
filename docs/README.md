@@ -29,11 +29,14 @@ implementation of Betrayal at House on the Hill, 2nd edition.
 | 08  | [Haunt System](08-haunt-system.md)     | Data-driven haunts, trigger DSL, script escape hatch   |
 | 09  | [Roadmap](09-roadmap.md)               | Milestones M0–M6 with exit criteria                    |
 | 10  | [Testing & Ops](10-testing-and-ops.md) | Test strategy, CI, hosting, observability              |
+| 11  | [Progress](11-progress.md)             | What is actually built, known defects, next actions    |
 
 ## Reading order
 
-If you are about to write code, read 01 → 03 → 05 → 09. The rest are
-reference documents you will return to while implementing a specific area.
+If you are about to write code, read 11 → 01 → 03 → 05 → 09. Start with
+[Progress](11-progress.md): documents 01–10 describe the design as intended,
+and only 11 describes what exists today. The rest are reference documents you
+will return to while implementing a specific area.
 
 ## Open questions
 
