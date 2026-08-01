@@ -104,26 +104,40 @@ export function Board({
     });
   }, [bounds]);
 
-  // Re-fit whenever `fitFloor` itself changes identity — which happens on
-  // every floor switch, since `bounds` is derived from `floor` — by calling
-  // it directly rather than trusting ResizeObserver's initial-notification
-  // timing. Switching floors does not necessarily change the viewport
-  // element's own size, and re-observing an unchanged-size element with a
-  // fresh observer is not reliably guaranteed to fire; only an explicit call
-  // makes every floor refit, not just the first one.
+  // `fitFloor`'s identity changes every floor switch (it closes over
+  // `bounds`, which is derived from `floor`), so this is what actually
+  // refits on a floor change: call it directly, synchronously, every time.
   useEffect(() => {
     fitFloor();
   }, [fitFloor]);
 
-  // Separately, watch the viewport element itself for real size changes
-  // (window resize, layout reflow) and refit then too.
+  // A SINGLE ResizeObserver for the component's whole lifetime, watching for
+  // genuine viewport size changes (window resize, layout reflow) — mounted
+  // once (deps `[]`) rather than torn down and recreated on every floor
+  // switch. `latestFitFloor` is kept current via the ref below so the
+  // observer's callback always calls the up-to-date fitFloor without needing
+  // to be reconnected.
+  //
+  // An earlier version re-created the observer on every floor change (deps
+  // `[fitFloor]`), disconnecting the previous one and calling `.observe()`
+  // again on the same DOM node. That churn is what made the fit
+  // order-dependent: two things could both end up writing `view` — the
+  // effect above (always correct) and a ResizeObserver notification for a
+  // floor that had already been switched away from, using the closure it
+  // captured at `.observe()` time. Whether a given browser reliably cancels
+  // an in-flight notification when `.disconnect()` races its delivery is not
+  // something to depend on when the fix is simply "connect once."
+  const latestFitFloor = useRef(fitFloor);
+  useEffect(() => {
+    latestFitFloor.current = fitFloor;
+  }, [fitFloor]);
   useEffect(() => {
     const vp = viewportRef.current;
     if (!vp) return;
-    const observer = new ResizeObserver(() => fitFloor());
+    const observer = new ResizeObserver(() => latestFitFloor.current());
     observer.observe(vp);
     return () => observer.disconnect();
-  }, [fitFloor]);
+  }, []);
 
   const centreOnMe = useCallback(() => {
     const vp = viewportRef.current;
