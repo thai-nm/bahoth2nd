@@ -14,13 +14,12 @@
  */
 
 import { useState } from 'react';
-import type { BoardState, Floor, PlacedTile, Rotation } from '@bahoth/shared';
+import type { BoardState, Colour, Floor, PlacedTile, Rotation } from '@bahoth/shared';
 import { cellKey } from '@bahoth/shared';
 import type { Content } from '@bahoth/content';
 import { fixtureContent } from '@bahoth/content';
 import { Board } from '../board/Board.js';
 import { FloorTabs } from '../board/FloorTabs.js';
-import type { Colour } from '../board/colour.js';
 
 /** A hand-placed tile. `id` doubles as the PlacedId — one instance per tile in this preview. */
 interface Placement {

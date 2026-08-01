@@ -11,9 +11,10 @@
 import { describe, expect, it } from 'vitest';
 import charactersJson from '../fixtures/characters.json' with { type: 'json' };
 import tilesJson from '../fixtures/tiles.json' with { type: 'json' };
+import { COLOURS } from '@bahoth/shared';
 import { buildContent, ContentError } from './load.js';
 import { fixtureContent } from './fixtures.js';
-import { FloorSchema } from './schemas.js';
+import { ColourSchema, FloorSchema } from './schemas.js';
 
 /** Content before validation is exactly as untyped as the JSON it came from. */
 type Raw = Record<string, any>;
@@ -124,6 +125,17 @@ describe('the content hash', () => {
     const changed = raw();
     tileIn(changed, 'tile.long_hallway').doors.e = true;
     expect(buildContent(changed, 'test').hash).not.toBe(a.hash);
+  });
+});
+
+describe('the Colour enum', () => {
+  it('matches @bahoth/shared COLOURS exactly', () => {
+    // Colour is a domain enum, not a content or rendering concern, so it is
+    // hand-written once in packages/shared/src/ids.ts (docs/03-architecture.md
+    // #dependency-rules) rather than derived from this schema. This is the
+    // tripwire: add a colour here without updating shared (or vice versa) and
+    // this fails loudly instead of the client silently disagreeing.
+    expect(ColourSchema.options).toEqual(COLOURS);
   });
 });
 

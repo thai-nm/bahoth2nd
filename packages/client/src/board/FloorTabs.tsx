@@ -8,9 +8,8 @@
  */
 
 import { FLOORS } from '@bahoth/shared';
-import type { Floor, PlacedId } from '@bahoth/shared';
+import type { Colour, Floor, PlacedId } from '@bahoth/shared';
 import { COLOUR_VAR } from './colour.js';
-import type { Colour } from './colour.js';
 
 const FLOOR_LABEL: Record<Floor, string> = {
   basement: 'Basement',

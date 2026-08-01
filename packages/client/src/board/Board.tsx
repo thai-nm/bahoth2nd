@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { DIR_ORDER, FLOORS } from '@bahoth/shared';
-import type { BoardState, Dir, Floor, PlacedId } from '@bahoth/shared';
+import type { BoardState, Colour, Dir, Floor, PlacedId } from '@bahoth/shared';
 import type { Content } from '@bahoth/content';
 import {
   TILE,
@@ -23,7 +23,6 @@ import {
 } from './layout.js';
 import type { TileView } from './layout.js';
 import { COLOUR_VAR } from './colour.js';
-import type { Colour } from './colour.js';
 
 export interface Pawn {
   placedId: PlacedId;
