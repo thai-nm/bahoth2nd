@@ -1,0 +1,381 @@
+/*
+ * Board rendering (docs/07-ui.md#73-board-rendering). Absolutely positioned
+ * DOM tiles inside a transformed container — no canvas, no SVG library.
+ */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.board {
+  display: grid;
+  gap: 8px;
+}
+
+.board__controls {
+  display: flex;
+  gap: 8px;
+}
+
+.board__btn {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.board__btn:hover {
+  background: #322b29;
+}
+.board__btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.viewport {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  height: 560px;
+  background: #100e0d;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: grab;
+  touch-action: none;
+}
+.viewport:active {
+  cursor: grabbing;
+}
+.viewport:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.world {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  transition: transform 150ms ease-out;
+}
+
+/* --- tiles ---------------------------------------------------------------- */
+
+.tile {
+  position: absolute;
+  display: block;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--ink);
+  text-align: left;
+  cursor: default;
+}
+.tile--reachable {
+  cursor: pointer;
+}
+.tile--reachable:disabled {
+  cursor: default;
+}
+.tile:focus-visible {
+  outline: 3px solid var(--accent-on-parchment);
+  outline-offset: 2px;
+}
+
+.tile__frame {
+  position: absolute;
+  inset: 0;
+  border: 3px solid var(--ink);
+  border-radius: 10px;
+  box-shadow: 0 4px 10px rgb(0 0 0 / 35%);
+  transition: transform 150ms ease-out;
+}
+.tile__frame--basement {
+  background: var(--floor-basement);
+}
+.tile__frame--ground {
+  background: var(--floor-ground);
+}
+.tile__frame--upper {
+  background: var(--floor-upper);
+}
+
+/* A reachable tile gets its outline on the (unrotated) tile, not the frame,
+   so the highlight itself never appears to spin with the room. */
+.tile--reachable .tile__frame {
+  outline: 3px solid var(--accent-on-parchment);
+  outline-offset: 3px;
+}
+
+/* Door notches: a gap in the frame's border with jamb ticks, not a drawn
+   door. Positioned in the tile's PRINTED (unrotated) frame, which is why
+   this block lives inside .tile__frame and rotates with it. */
+.doornotch {
+  position: absolute;
+  background: inherit;
+}
+.doornotch--n,
+.doornotch--s {
+  left: 50%;
+  width: 30%;
+  height: 6px;
+  margin-left: -15%;
+}
+.doornotch--n {
+  top: -3px;
+}
+.doornotch--s {
+  bottom: -3px;
+}
+.doornotch--e,
+.doornotch--w {
+  top: 50%;
+  width: 6px;
+  height: 30%;
+  margin-top: -15%;
+}
+.doornotch--e {
+  right: -3px;
+}
+.doornotch--w {
+  left: -3px;
+}
+.doornotch::before,
+.doornotch::after {
+  content: '';
+  position: absolute;
+  background: var(--ink);
+}
+.doornotch--n::before,
+.doornotch--n::after,
+.doornotch--s::before,
+.doornotch--s::after {
+  width: 2px;
+  height: 9px;
+  top: -1.5px;
+}
+.doornotch--n::before,
+.doornotch--s::before {
+  left: 0;
+}
+.doornotch--n::after,
+.doornotch--s::after {
+  right: 0;
+}
+.doornotch--e::before,
+.doornotch--e::after,
+.doornotch--w::before,
+.doornotch--w::after {
+  height: 2px;
+  width: 9px;
+  left: -1.5px;
+}
+.doornotch--e::before,
+.doornotch--w::before {
+  top: 0;
+}
+.doornotch--e::after,
+.doornotch--w::after {
+  bottom: 0;
+}
+
+/* Label, badges, dots, and pawns all sit OUTSIDE .tile__frame, so none of
+   them rotate with it — the room name (and everything else) renders upright
+   (docs/07-ui.md#73). Centred, matching the approved mock; pawns are
+   anchored below centre (see PAWN_ANCHOR_Y in Board.tsx) so they fan out
+   clear of the name instead of the label being pushed out of the way. */
+.tile__label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  font-family: var(--serif);
+  font-size: 13px;
+  text-align: center;
+  line-height: 1.2;
+  pointer-events: none;
+}
+
+.tile__symbol {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 12px;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 40%);
+}
+.tile__symbol--item {
+  background: var(--sym-item);
+}
+.tile__symbol--event {
+  background: var(--sym-event);
+}
+.tile__symbol--omen {
+  background: var(--sym-omen);
+}
+
+.tile__link {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 55%);
+  color: #fff;
+  text-transform: capitalize;
+}
+
+.tile__floors {
+  position: absolute;
+  bottom: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 3px;
+}
+.tile__floordot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: transparent;
+  border: 1px solid rgb(0 0 0 / 35%);
+}
+.tile__floordot--basement {
+  background: var(--floor-basement);
+  border-color: var(--ink);
+}
+.tile__floordot--ground {
+  background: var(--floor-ground);
+  border-color: var(--ink);
+}
+.tile__floordot--upper {
+  background: var(--floor-upper);
+  border-color: var(--ink);
+}
+
+/* --- pawns ------------------------------------------------------------ */
+
+.pawn {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #1a1310;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 45%);
+}
+.pawn--me {
+  box-shadow:
+    0 0 0 2px var(--accent-on-parchment),
+    0 1px 4px rgb(0 0 0 / 45%);
+}
+
+/* --- doorway arrows ----------------------------------------------------- */
+
+.doorway {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 45%);
+  color: #fff;
+  font-size: 12px;
+}
+.doorway--live {
+  cursor: pointer;
+  background: var(--accent-on-parchment);
+}
+.doorway--live:hover {
+  background: #b5591f;
+}
+.doorway--dim {
+  opacity: 0.4;
+  cursor: default;
+}
+.doorway:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.doorway--n {
+  transform: rotate(0deg);
+}
+.doorway--e {
+  transform: rotate(90deg);
+}
+.doorway--s {
+  transform: rotate(180deg);
+}
+.doorway--w {
+  transform: rotate(270deg);
+}
+
+/* --- floor tabs ----------------------------------------------------------- */
+
+.floortabs {
+  display: flex;
+  gap: 6px;
+}
+.floortab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.floortab--active {
+  border-color: var(--accent);
+  background: var(--panel-2);
+}
+.floortab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.floortab__dots {
+  display: flex;
+  gap: 3px;
+}
+.floortab__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .world,
+  .tile__frame {
+    transition: none !important;
+  }
+}

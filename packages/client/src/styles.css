@@ -22,6 +22,20 @@
   --purple: #8a5a9e;
   --yellow: #c9a227;
 
+  --floor-basement: #c5cbc1;
+  --floor-ground: #e3d5b8;
+  --floor-upper: #d9d3cb;
+  --ink: #3b2f26;
+  /*
+   * --accent measures 2.65:1 against --floor-ground and fails the 4.5:1
+   * minimum (docs/07-ui.md#76-accessibility). Anything sitting on a
+   * parchment tile uses this instead; UI chrome keeps --accent.
+   */
+  --accent-on-parchment: #9c4a16;
+  --sym-item: #2d5f7d;
+  --sym-event: #8a5a1c;
+  --sym-omen: #86323c;
+
   --serif: 'Iowan Old Style', Georgia, 'Times New Roman', serif;
   --sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 }

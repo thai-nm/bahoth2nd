@@ -20,12 +20,22 @@ export type Dir = 'n' | 'e' | 's' | 'w';
 export type Rotation = 0 | 90 | 180 | 270;
 export type Trait = 'speed' | 'might' | 'sanity' | 'knowledge';
 export type DeckKind = 'item' | 'event' | 'omen';
+/** The six explorer colours. Mirrored by ColourSchema in packages/content/src/schemas.ts — content.test.ts asserts the two never drift. */
+export type Colour = 'red' | 'green' | 'blue' | 'white' | 'purple' | 'yellow';
 
 export const FLOORS: readonly Floor[] = ['basement', 'ground', 'upper'];
 export const DIRS: readonly Dir[] = ['n', 'e', 's', 'w'];
 export const ROTATIONS: readonly Rotation[] = [0, 90, 180, 270];
 export const TRAITS: readonly Trait[] = ['speed', 'might', 'sanity', 'knowledge'];
 export const DECK_KINDS: readonly DeckKind[] = ['item', 'event', 'omen'];
+export const COLOURS: readonly Colour[] = [
+  'red',
+  'green',
+  'blue',
+  'white',
+  'purple',
+  'yellow',
+];
 
 /** Speed and Might. Physical damage is assigned across these. */
 export const PHYSICAL_TRAITS: readonly Trait[] = ['speed', 'might'];
