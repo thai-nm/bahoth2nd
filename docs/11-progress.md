@@ -2,7 +2,7 @@
 
 Living status document. Updated when a milestone moves, not on a schedule.
 
-**Last updated: 2026-08-01** · **Current milestone: M2 (next)**
+**Last updated: 2026-08-01** · **Current milestone: M2 (in progress)**
 
 ## Status at a glance
 
@@ -10,11 +10,56 @@ Living status document. Updated when a milestone moves, not on a schedule.
 | -------------------------------- | -------------- | ------------------------------------------------------------- |
 | M0 — Skeleton and the spine      | ✅ Complete    | Merged — [PR #2](https://github.com/thai-nm/bahoth2nd/pull/2) |
 | M1 — Seats, identity, redaction  | ✅ Complete    | All nine items; D1–D5 closed                                  |
-| M2 — The house                   | ⬜ Not started | The next substantial piece of work                            |
+| M2 — The house                   | 🟨 In progress | Tiles authored; movement, discovery, and the renderer to come |
 | M3 — Cards, traits, dice         | ⬜ Not started |                                                               |
 | M4 — The haunt, and five of them | ⬜ Not started |                                                               |
 | M5 — Polish                      | ⬜ Not started |                                                               |
 | M6 — The remaining 45 haunts     | ⬜ Not started |                                                               |
+
+---
+
+## M2 — in progress
+
+Split four ways, a PR each: **content**, then the movement graph, then
+discovery and the prompt lifecycle, then the renderer.
+
+| Item                                                    | Status         |
+| ------------------------------------------------------- | -------------- |
+| Tiles, static links, and the starting layout as content | ✅ Done        |
+| `movement.ts`: adjacency, rotation, links, no-backtrack | ⬜ Not started |
+| Discovery: tile draw, rotation prompt, placement        | ⬜ Not started |
+| `PendingPrompt` lifecycle and timeout defaults          | ⬜ Not started |
+| Board renderer and the event log panel                  | ⬜ Not started |
+
+The content item shipped 49 tiles (44 drawable plus the three starting rooms
+and two landings), the `to_tile` / `to_floor` / `oneway_drop` link vocabulary,
+and a `house` block that puts the starting arrangement in content rather than
+in `setup.ts`. All of it placeholder — invented names, invented door layouts —
+because real room text is not ours to commit
+([01-overview](01-overview.md#intellectual-property-position)). The shapes are
+what the engine needs: floor restrictions, a symbol mix, and at least one tile
+of every link kind.
+
+Two decisions worth recording:
+
+- **Effects are carried opaquely rather than validated.** `EffectSchema` is
+  `z.unknown()` until M3 builds the interpreter. Validating against a union
+  that is still being designed would wave through exactly the typos the
+  schema exists to catch.
+- **The content directory is all-or-nothing.** With two parts on disk
+  (`characters.json`, `tiles.json`), a directory holding one of them used to
+  fall back to placeholders for the rest. It now refuses to start: seating
+  real explorers in an invented house, silently, is the worse failure.
+
+25 content tests, of which 14 assert that a coherence check rejects the
+mistake it claims to catch. A validator nobody has watched fail is not a
+validator — D1 was a range check the wrong value happened to satisfy.
+
+One more, on the server: the client rebuilds the bundle from
+`GET /api/content` and compares hashes before it may join, so a part the
+endpoint forgets to serve is not a missing feature, it is every client locked
+out of every room. The test fetches the real endpoint and rebuilds it; it was
+watched failing with `tiles` removed from the payload.
 
 ---
 
@@ -264,12 +309,10 @@ Not bugs — real properties of the design that were not obvious when planning.
 
 In order:
 
-1. **Start M2** — the house. 44 tiles as content, the movement graph, discovery
-   with the rotation prompt, and the board renderer. This is the milestone that
-   makes the thing feel like the game, and the largest single content-authoring
-   push so far. Split it the way M1 was split: content and schemas, then the
-   movement graph, then discovery and the prompt lifecycle, then the renderer —
-   a PR each, rather than one that touches everything.
+1. **`movement.ts`** — adjacency after rotation, static links, reachability,
+   and the no-backtrack rule, plus placing `house.layout` on the board at
+   `START_GAME` and standing every explorer in the start tile. The content it
+   reads is now on `main`.
 2. **Confirm the turn-timer defaults with a real playtest** (roadmap open
    question 2). Ten minutes and ninety seconds are still guesses; they are now
    at least guesses that something reads.
@@ -278,11 +321,11 @@ In order:
 
 Rough, for trend only.
 
-|                     | M0                    | M1                    |
-| ------------------- | --------------------- | --------------------- |
-| Tests               | 49                    | 88                    |
-| Packages            | 5                     | 5                     |
-| Haunts implemented  | 0 / 50                | 0 / 50                |
-| Room tiles authored | 0 / 44                | 0 / 44                |
-| Cards authored      | 0 / ~65               | 0 / ~65               |
-| Characters authored | 12 / 12 (placeholder) | 12 / 12 (placeholder) |
+|                     | M0                    | M1                    | M2 (so far)           |
+| ------------------- | --------------------- | --------------------- | --------------------- |
+| Tests               | 49                    | 88                    | 114                   |
+| Packages            | 5                     | 5                     | 5                     |
+| Haunts implemented  | 0 / 50                | 0 / 50                | 0 / 50                |
+| Room tiles authored | 0 / 44                | 0 / 44                | 44 / 44 (placeholder) |
+| Cards authored      | 0 / ~65               | 0 / ~65               | 0 / ~65               |
+| Characters authored | 12 / 12 (placeholder) | 12 / 12 (placeholder) | 12 / 12 (placeholder) |

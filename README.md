@@ -73,12 +73,18 @@ never baked into the Docker image. Committed placeholder fixtures in
 and CI passes without any of it. See
 [docs/01-overview.md](docs/01-overview.md#intellectual-property-position).
 
+Content is authored one file per part — currently `characters.json` and
+`tiles.json` — and validated as a whole, because the checks cross-reference
+between parts. `CONTENT_DIR` is all-or-nothing: an empty or missing directory
+uses the placeholders, and a directory holding some parts but not others is a
+startup error rather than a half-real house.
+
 ## Configuration
 
 | Variable                     | Default                | Meaning                                |
 | ---------------------------- | ---------------------- | -------------------------------------- |
 | `PORT`                       | `8080`                 | HTTP + WebSocket port                  |
-| `CONTENT_DIR`                | `./content`            | Real content; falls back to fixtures   |
+| `CONTENT_DIR`                | `./content`            | Real content; all parts or none        |
 | `DATA_DIR`                   | `./data`               | Per-room JSONL action logs             |
 | `CLIENT_DIR`                 | `packages/client/dist` | Static bundle to serve                 |
 | `ROOM_TTL_HOURS`             | `4`                    | Idle room eviction                     |
