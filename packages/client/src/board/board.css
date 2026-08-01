@@ -192,16 +192,16 @@
 
 /* Label, badges, dots, and pawns all sit OUTSIDE .tile__frame, so none of
    them rotate with it — the room name (and everything else) renders upright
-   (docs/07-ui.md#73). */
-/* Top-aligned rather than centred so pawns (anchored lower, see .pawn) have
-   the room clear to fan out in without sitting on top of the name. */
+   (docs/07-ui.md#73). Centred, matching the approved mock; pawns are
+   anchored below centre (see PAWN_ANCHOR_Y in Board.tsx) so they fan out
+   clear of the name instead of the label being pushed out of the way. */
 .tile__label {
   position: absolute;
   inset: 0;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
-  padding: 22px 10px 0;
+  padding: 10px;
   font-family: var(--serif);
   font-size: 13px;
   text-align: center;

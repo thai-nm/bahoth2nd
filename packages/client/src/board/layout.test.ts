@@ -203,6 +203,46 @@ describe('the BoardPreview board', () => {
     }
   });
 
+  it("is fully reachable from each floor's landing, walking only through matching door pairs", () => {
+    // The door-alignment test above only inspects OCCUPIED neighbours, so a
+    // tile with no neighbours at all — disconnected from the rest of the
+    // house — passes it trivially. That is exactly the bug a first draft of
+    // this preview had (sunken_cistern floating two cells off the board): a
+    // tile nobody can walk to is not a preview of a house. This test walks
+    // the door graph from each floor's declared landing and asserts every
+    // placed tile on that floor is reached.
+    const board = buildPreviewBoard(content);
+    for (const floor of ['basement', 'ground', 'upper'] as Floor[]) {
+      const views = tileViewsForFloor(board, content, floor);
+      const byCell = new Map(views.map((v) => [cellKey(v.x, v.y), v]));
+
+      const landingTileId = content.house.landings[floor];
+      const landing = views.find((v) => v.tileId === landingTileId);
+      expect(landing, `${floor} has no landing placed in the preview`).toBeDefined();
+      if (!landing) continue;
+
+      const visited = new Set<string>([landing.placedId]);
+      const queue = [landing];
+      for (let i = 0; i < queue.length; i++) {
+        const current = queue[i];
+        if (!current) continue;
+        for (const dir of ['n', 'e', 's', 'w'] as Dir[]) {
+          if (!current.doors[dir]) continue; // Closed on this side: no edge, matched or not.
+          const [nx, ny] = neighbourCell(current.x, current.y, dir);
+          const next = byCell.get(cellKey(nx, ny));
+          if (!next || visited.has(next.placedId)) continue;
+          visited.add(next.placedId);
+          queue.push(next);
+        }
+      }
+
+      const unreached = views
+        .filter((v) => !visited.has(v.placedId))
+        .map((v) => v.placedId);
+      expect(unreached, `${floor} tiles unreachable from its landing`).toEqual([]);
+    }
+  });
+
   it('touches all three floors, both a rotated tile and an open doorway', () => {
     const board = buildPreviewBoard(content);
     const byFloor = (floor: Floor) => tileViewsForFloor(board, content, floor);

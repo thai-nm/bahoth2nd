@@ -104,11 +104,19 @@ export function Board({
     });
   }, [bounds]);
 
-  // Re-fit whenever the floor changes (a new bounding box) AND whenever the
-  // viewport itself resizes — a plain mount-time call is not enough because
-  // the very first layout pass can report a smaller box than the element's
-  // settled size (e.g. before the surrounding grid finishes sizing), and
-  // because a window resize should also keep the floor fitted.
+  // Re-fit whenever `fitFloor` itself changes identity — which happens on
+  // every floor switch, since `bounds` is derived from `floor` — by calling
+  // it directly rather than trusting ResizeObserver's initial-notification
+  // timing. Switching floors does not necessarily change the viewport
+  // element's own size, and re-observing an unchanged-size element with a
+  // fresh observer is not reliably guaranteed to fire; only an explicit call
+  // makes every floor refit, not just the first one.
+  useEffect(() => {
+    fitFloor();
+  }, [fitFloor]);
+
+  // Separately, watch the viewport element itself for real size changes
+  // (window resize, layout reflow) and refit then too.
   useEffect(() => {
     const vp = viewportRef.current;
     if (!vp) return;
@@ -248,8 +256,12 @@ const FAN_OFFSETS: ReadonlyArray<readonly [number, number]> = [
   [0, -26],
 ];
 
-/** Lower-third of the tile, clear of the top-aligned room label (docs/07-ui.md#73). */
-const PAWN_ANCHOR_Y = TILE * 0.68;
+/**
+ * Below the vertical centre, clear of the centred room label (docs/07-ui.md
+ * #73: the approved mock centres the name — moving the label instead of the
+ * pawns would make the tile read as a labelled box rather than a room).
+ */
+const PAWN_ANCHOR_Y = TILE * 0.72;
 
 interface TileProps {
   view: TileView;

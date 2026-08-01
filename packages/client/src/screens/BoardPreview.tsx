@@ -43,14 +43,23 @@ const EXTRA_PLACEMENTS: readonly Placement[] = [
   { tileId: 'tile.mud_room', floor: 'ground', x: 1, y: 1, rotation: 90 },
 
   // North of the basement landing's north door (true) — root_cellar prints
-  // n+e only, so it needs its south door, which rotating 180 gives it.
+  // n+e only, so it needs its south door, which rotating 180 gives it. Its
+  // two printed doors are always adjacent (n+e, e+s, s+w, or w+n depending on
+  // rotation), so this tile can NEVER show both a north and a south door at
+  // once — it is a dead end for anything trying to continue north from here.
   { tileId: 'tile.root_cellar', floor: 'basement', x: 0, y: -1, rotation: 180 },
   // East of the landing's east door (true) — fungal_grotto prints n only, so
   // it needs its west door, which rotating 270 gives it. Also the omen symbol.
   { tileId: 'tile.fungal_grotto', floor: 'basement', x: 1, y: 0, rotation: 270 },
-  // Deliberately unconnected to anything else: two open doorways (n, s) and
-  // the event symbol, at no risk of a door mismatch since it has no neighbours.
-  { tileId: 'tile.sunken_cistern', floor: 'basement', x: 0, y: -3, rotation: 0 },
+  // West of the landing's west door (true, otherwise unused) — sunken_cistern
+  // prints opposite n+s doors, so rotating 90 turns that pair into e+w: e
+  // meets the landing, w is left open. This is deliberately NOT chained off
+  // root_cellar (which a first draft did, at (0,-2)) — root_cellar can never
+  // expose a north door while its south door holds the landing connection
+  // (see above), so a tile placed there is unreachable, not merely rotated
+  // wrong. Every placed tile must be reachable from its floor's landing;
+  // layout.test.ts walks the door graph from each landing and asserts this.
+  { tileId: 'tile.sunken_cistern', floor: 'basement', x: -1, y: 0, rotation: 90 },
 
   // North of the upper landing's north door (true) — linen_press prints a
   // bare south door already, no rotation needed. Also the item symbol.
