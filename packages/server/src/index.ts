@@ -51,9 +51,14 @@ export function createServer() {
     }
 
     if (url.pathname === '/api/content') {
+      // Every field the schema validates, because the client rebuilds the
+      // bundle from this payload and compares hashes. An omitted part would
+      // hash differently and lock every client out of every room.
       return json(res, 200, {
         hash: content.hash,
         characters: content.characters,
+        tiles: content.tiles,
+        house: content.house,
       });
     }
 

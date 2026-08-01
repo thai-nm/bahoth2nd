@@ -197,13 +197,18 @@ const TileSchema = z.object({
   copies: z.number().int().min(1).default(1),
   staticLinks: z.array(StaticLinkSchema).default([]),
   onEnter: z.array(EffectSchema).default([]),
-  rules: z.array(TriggerRuleSchema).default([]),
   art: z.object({ bg: z.string(), icon: z.string().optional() }).optional(),
 });
 ```
 
 `doors` is in the tile's **unrotated** frame. Effective doors are
 `rotateDoors(tile.doors, placed.rotation)`.
+
+`EffectSchema` is `z.unknown()` until M3 builds the interpreter, and `rules`
+(trigger rules) is not declared at all until M4. Both are deliberate: a schema
+that validates against a union still being designed would wave through exactly
+the typos it exists to catch, and zod strips unknown keys, so an `onEnter`
+authored early is carried opaquely rather than silently dropped.
 
 ### Static links
 
@@ -219,6 +224,53 @@ type StaticLink =
 Expressing the Grand Staircase, the Stairs from Basement, the Coal Chute, and
 the Mystic Elevator as data rather than `if (tileId === ...)` branches in the
 movement code is the single highest-leverage decision in the content model.
+
+`twoWay` describes the link, not the pair of tiles: one declaration on either
+end is enough and the movement graph reads it from both sides. A link whose
+target is not on the board yet is simply inert.
+
+### The house
+
+The pre-placed tiles are content too, so the starting arrangement is not a
+constant buried in `setup.ts`:
+
+```ts
+const HouseSchema = z.object({
+  layout: z.array(StartingTileSchema).min(1), // { tileId, floor, x, y, rotation }
+  startTile: z.string(), // where every explorer begins
+  landings: z.record(FloorSchema, z.string()), // where a `to_floor` link arrives
+});
+```
+
+**Grid convention: +x is east, +y is south** — screen order, so the renderer
+and the movement graph agree without a flip anywhere. A door on `n` faces the
+cell at `y - 1`.
+
+`landings` is declared rather than inferred so a floor cannot end up with two
+candidate landings; every `to_floor` link must name the same tile the house
+does, which is checked on load.
+
+### What the loader derives
+
+`buildContent` returns `tiles`, `tilesById`, `house`, and `deckTiles` — the
+draw deck as tile ids, one entry per copy, every tile that is not pre-placed,
+**in file order**. Shuffling belongs to the engine and its in-state RNG, so
+content stays a deterministic input rather than a source of randomness.
+
+### Coherence checks on load
+
+Beyond the per-field schema (`packages/content/src/load.ts`), rejected at
+startup: duplicate ids, a tile with no doors, a link to a tile that does not
+exist or to itself, a `to_floor` link that disagrees with `house.landings`, a
+drop onto a floor the tile may itself be placed on, a floor with nothing
+drawable on it, a layout that places an unknown tile, places one twice, uses a
+floor the tile disallows, or puts two tiles in one cell, a `startTile` that is
+not placed, a landing that is not pre-placed on its own floor, and a
+pre-placed tile declaring extra copies.
+
+The floor-availability check is the one worth naming: a floor with no legal
+tile deadlocks the first discovery made on it — the search runs the whole deck,
+finds nothing, and there is no rule for that case.
 
 ### Character
 
