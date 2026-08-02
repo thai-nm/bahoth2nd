@@ -10,16 +10,17 @@
 import {
   MAX_PLAYERS,
   MIN_PLAYERS,
-  isRotateTilePayload,
   type CharId,
   type GameAction,
   type GameState,
   type PlayerState,
+  type Rotation,
   type SeatId,
   type Trait,
 } from '@bahoth/shared';
 import type { Content } from '@bahoth/content';
 import { getOpenDoorways } from './discovery.js';
+import { legalAnswersFor } from './prompts.js';
 import { getReachable } from './movement.js';
 
 /**
@@ -120,19 +121,19 @@ export function getLegalActions(
   // A pending prompt blocks everything except the seat that must answer it.
   if (state.pending) {
     if (state.pending.seatId !== seat) return [];
-    if (
-      state.pending.kind === 'rotate_tile' &&
-      isRotateTilePayload(state.pending.payload)
-    ) {
-      return state.pending.payload.legalRotations.map((rotation) => ({
+    // The choices come from the prompt's own handler (prompts.ts), so legality
+    // and `reduce`'s `validateAnswer` read the same table and cannot drift —
+    // docs/05-engine.md#57 requires exactly that. A kind whose answers are not
+    // enumerable (`null`) offers nothing rather than an `ANSWER` the reducer
+    // would then reject; that is deviation 16, and it still holds.
+    if (state.pending.kind === 'rotate_tile') {
+      const answers = legalAnswersFor(state.pending) ?? [];
+      return answers.map((rotation) => ({
         t: 'ROTATE_TILE' as const,
         seat,
-        rotation,
+        rotation: rotation as Rotation,
       }));
     }
-    // No other prompt kind is raised yet; a prompt this function cannot
-    // enumerate offers nothing rather than an ANSWER `reduce` would reject
-    // (docs/05-engine.md#57: getLegalActions and reduce must never disagree).
     return [];
   }
 

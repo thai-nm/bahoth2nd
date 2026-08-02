@@ -7,10 +7,14 @@ import { makeRng } from './rng.js';
  * The long budget exists so nobody loses a turn to a clock they did not know
  * about; the short one exists so a seat that dropped cannot stall the room
  * (docs/06-networking.md#disconnection-behaviour).
+ *
+ * A prompt gets a minute — far less than a turn, because it blocks every seat
+ * at the table rather than only the one spending it.
  */
 export const DEFAULT_TIMERS: TurnTimers = {
   turnMs: 10 * 60 * 1000,
   disconnectedMs: 90 * 1000,
+  promptMs: 60 * 1000,
   removeGraceMs: 10 * 60 * 1000,
 };
 

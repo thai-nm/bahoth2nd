@@ -90,6 +90,7 @@ startup error rather than a half-real house.
 | `ROOM_TTL_HOURS`             | `4`                    | Idle room eviction                     |
 | `TURN_TIMEOUT_SECONDS`       | `600`                  | Connected-player turn timer            |
 | `DISCONNECT_TIMEOUT_SECONDS` | `90`                   | Disconnected-player turn timer         |
+| `PROMPT_TIMEOUT_SECONDS`     | `60`                   | Time to answer a prompt before default |
 | `TICK_INTERVAL_MS`           | `1000`                 | Turn-clock granularity                 |
 | `REMOVE_GRACE_SECONDS`       | `600`                  | Absence before a seat can be voted out |
 | `LOG_LEVEL`                  | `info`                 | `debug` \| `info` \| `warn` \| `error` |

@@ -10,7 +10,7 @@ Living status document. Updated when a milestone moves, not on a schedule.
 | -------------------------------- | -------------- | ------------------------------------------------------------- |
 | M0 — Skeleton and the spine      | ✅ Complete    | Merged — [PR #2](https://github.com/thai-nm/bahoth2nd/pull/2) |
 | M1 — Seats, identity, redaction  | ✅ Complete    | All nine items; D1–D5 closed                                  |
-| M2 — The house                   | 🟨 In progress | The house is now explorable end to end; prompts and log left  |
+| M2 — The house                   | 🟨 In progress | Explorable end to end, prompts general; the event log is left |
 | M3 — Cards, traits, dice         | ⬜ Not started |                                                               |
 | M4 — The haunt, and five of them | ⬜ Not started |                                                               |
 | M5 — Polish                      | ⬜ Not started |                                                               |
@@ -21,8 +21,10 @@ Living status document. Updated when a milestone moves, not on a schedule.
 ## M2 — in progress
 
 Planned as four PRs — content, movement, discovery, renderer — and running as
-six, because the renderer turned out not to need the movement graph and went
-early (deviation 8), and wiring it to the engine was worth its own diff.
+seven, because the renderer turned out not to need the movement graph and went
+early (deviation 8), wiring it to the engine was worth its own diff, and
+discovery shipped the prompt mechanism a milestone-item ahead of the generic
+lifecycle that now sits under it.
 
 | Item                                                    | Status                                                        |
 | ------------------------------------------------------- | ------------------------------------------------------------- |
@@ -31,8 +33,8 @@ early (deviation 8), and wiring it to the engine was worth its own diff.
 | Board renderer: tiles, doors, pan/zoom, floor tabs      | ✅ Done — [#15](https://github.com/thai-nm/bahoth2nd/pull/15) |
 | `movement.ts`: adjacency, rotation, links, no-backtrack | ✅ Done — [#16](https://github.com/thai-nm/bahoth2nd/pull/16) |
 | Wire the board into the game screen                     | ✅ Done — [#17](https://github.com/thai-nm/bahoth2nd/pull/17) |
-| Discovery: tile draw, rotation prompt, placement        | ✅ Done — this PR                                             |
-| `PendingPrompt` lifecycle and timeout defaults          | ⬜ Not started — the generic half; see below                  |
+| Discovery: tile draw, rotation prompt, placement        | ✅ Done — [#18](https://github.com/thai-nm/bahoth2nd/pull/18) |
+| `PendingPrompt` lifecycle and timeout defaults          | ✅ Done — this PR                                             |
 | Event log panel driven by `GameEvent`s                  | ⬜ Not started                                                |
 
 The content item shipped 49 tiles (44 drawable plus the three starting rooms
@@ -310,6 +312,94 @@ register on the board's own buttons — which carry pan/drag pointer capture —
 and were driven with dispatched `MouseEvent`s instead. That is a harness quirk,
 not shipped behaviour, but it means the click path itself is verified slightly
 less directly than the rest.
+
+### The prompt lifecycle, the generic half
+
+Discovery built suspend/resume and exactly one kind on top of it. What was
+left was making it general before M3 leans on it hard: a prompt's own clock,
+the `ANSWER` action, and a story for the five kinds nothing raises yet.
+
+**The prompt gets its own clock, and it is much shorter than the turn's.**
+Before this, an unanswered prompt could only be resolved by the turn clock
+expiring — so one undecided rotation cost the seat its entire turn, ten
+minutes of it. Now `timers.promptMs` (60 s, `PROMPT_TIMEOUT_SECONDS`) resolves
+the prompt on its default and **play carries on inside the same turn**. That
+asymmetry is the reason the budget is separate rather than shared: a turn is
+spent by one seat, a prompt blocks the whole table.
+
+Four decisions worth recording:
+
+- **The deadline is armed by `TICK`, not written by the server.**
+  docs/04-data-model.md says `deadline` is "set by the server", which is true
+  of where `now` comes from and not of who writes the field — the reducer is
+  still the only mutator, and a deadline invented outside the action log would
+  not survive replay. So it works exactly like `turnDeadline`: raised null,
+  armed by the next tick. **Arming and firing are deliberately different
+  ticks** — doing both in one pass makes a `promptMs` of 0 resolve instantly,
+  which reads as a prompt that expired before anyone saw it.
+- **`ANSWER` and `ROTATE_TILE` are two doors into one function.** Both land in
+  `answerPrompt`, and a test asserts the two produce byte-identical states and
+  events. `ANSWER` additionally checks `promptId` against `pending.id`, which
+  is the whole reason that field exists: a client answering the prompt it
+  _saw_ must not land on the prompt that replaced it in flight.
+- **A default answer is validated like any other answer.** `resolvePromptWithDefault`
+  no longer has its own idea of what to apply; it runs `defaultAnswer` through
+  the same `validateAnswer` a player's answer goes through, and resumes through
+  the same function. A timeout that could do something no player was offered is
+  a bug that only ever shows up on a clock nobody is watching.
+- **`PROMPT_HANDLERS` is a total `Record<PromptKind, …>`.** Adding a kind to
+  `shared` without deciding how it validates is now a **compile error** rather
+  than a prompt that silently accepts nothing and times out into a branch
+  nobody wrote. The five unraised kinds get an explicit handler that refuses
+  every answer and enumerates nothing — their real validators land with the
+  code that raises them, because a validator written now against a payload
+  shape nobody has designed is a check that cannot fail, which is D1's family.
+
+**One bug this found in its own migration path, before it could ship.**
+Recovery read `header.timers ?? this.timers()`. A log written before `promptMs`
+existed carries the other three budgets and not that one, so the `??` hands the
+room a `promptMs: undefined` — every prompt deadline becomes `now + undefined`,
+i.e. `NaN`, and `now >= NaN` is false forever. A prompt clock that looks armed
+and never fires, in exactly the rooms that survived a restart. The header is
+merged over today's defaults now, invariant 7b rejects a non-finite deadline,
+and the test writes a genuinely old-format log and recovers from it.
+
+**Two tests that passed while the code was broken, and had to be fixed to
+be worth anything.** The first: the server-side "arms an unarmed prompt clock"
+test passed with `isTickDue` completely blind to prompts, because a freshly
+started room has an unarmed _turn_ clock, which is due on its own and drags the
+prompt's arming along with it. It now arms the turn clock first, so only the
+prompt can make the sweep fire. The second was self-inflicted during review of
+this work — a mutation meant to break `ANSWER` never applied, and the suite
+staying green was read as coverage until the mutation itself was checked. Both
+are the same lesson as #15's floating tile: **a test you have not watched fail
+is not evidence.** Every assertion here was watched failing against a
+deliberate mutation of the line it depends on: arming removed, arm-and-fire
+collapsed into one tick, `ANSWER` returned to `UNKNOWN_ACTION`, the `promptId`
+check bypassed, the illegal-default fallback removed, the unraised handler made
+to accept anything, `isTickDue` blinded, and the header substituted rather than
+merged.
+
+**Not done, deliberately: prompt payload redaction.** `rotate_tile`'s payload
+is public by design — the ghost tile is drawn for every seat. `choose_card`
+will not be, and `redactFor` currently passes `pending` through whole. That is
+M3's problem, and inventing the rule now, with no kind to test it against,
+would be guessing. It is listed under "Next actions" rather than left implicit.
+
+240 tests, thirteen files.
+
+**Verified by driving a real game in a browser** with `PROMPT_TIMEOUT_SECONDS=20`
+so the clock is observable: four seats — two scripted websocket clients and
+**two browser tabs, one on `localhost` and one on `127.0.0.1`**, which are
+different origins and therefore hold different `localStorage`, so each keeps
+its own seat. That is what made the watcher side observable for the first time:
+the prompted seat sees `Placing: Bent Corridor 0:15` with rotate controls, and
+the other tab simultaneously sees `Placer is placing the Scullery Hatch… 0:03`
+with **zero** buttons. Letting one expire placed the tile on the default
+rotation, logged the timeout, and left the top bar still reading "Your turn" —
+the behaviour the whole item buys. Answering normally still works. The
+synthetic-click quirk from #18 recurred and was again worked around with
+dispatched `MouseEvent`s.
 
 ---
 
@@ -598,6 +688,8 @@ rather than drift.
 | 15  | Passed-over tiles reshuffle the **whole** remaining deck, not just themselves back in | The deck's order is hidden either way, so the two are the same information to every player. One line instead of ten. A draw that passed nothing over leaves the RNG untouched, so ordinary discoveries do not perturb later rolls.                                                                   |
 | 16  | A pending prompt offers `ROTATE_TILE`; the generic `ANSWER` is offered for nothing    | `getLegalActions` previously returned `ANSWER { answer: null }`, which `reduce` rejects — a legal action the reducer refuses, green only because no prompt could be raised. It now enumerates real choices, and offers nothing for a kind it cannot enumerate.                                       |
 | 17  | Deck **drawability** is derived from content + board, never read off `state.tileDeck` | The deck's order is redacted; its composition is not, and cannot be — content and the board are both public. Deriving it is what lets one legality function answer identically on the server and on a client that holds only a redacted snapshot.                                                    |
+| 18  | `pending.deadline` is armed by `TICK`, not "set by the server" as 04-data-model says  | The reducer is the only mutator, and the engine may not read a clock. A deadline written outside the action log would not survive replay. `now` still comes from the server — in the action — which is the part of the doc that matters. Same mechanism as `turnDeadline`.                           |
+| 19  | A prompt gets its **own** budget (`timers.promptMs`), not a slice of the turn's       | A turn is spent by the seat taking it; a prompt blocks every seat at the table. Sharing the turn's clock meant one undecided rotation cost a whole ten-minute turn. 60 s is a guess, like the other two, and joins open question 2's playtest list.                                                  |
 
 ---
 
@@ -629,15 +721,16 @@ Not bugs — real properties of the design that were not obvious when planning.
 
 In order:
 
-1. **`PendingPrompt` lifecycle, the generic half.** Server-set deadlines, the
-   `ANSWER` action, and defaults for the prompt kinds that do not exist yet.
-   Discovery built the suspend/resume mechanism and one kind on top of it;
-   what is left is making it general before M3 leans on it hard.
-2. **Event log panel driven by `GameEvent`s** — the last M2 item. `describe()`
+1. **Event log panel driven by `GameEvent`s** — the last M2 item. `describe()`
    still prints seat ids rather than names, which is that item's job.
+2. **Decide what a prompt payload reveals, in M3.** `redactFor` passes
+   `pending` through whole. Correct for `rotate_tile`, whose payload is drawn
+   on everyone's board anyway; wrong the moment `choose_card` puts card
+   identities in a payload. The rule belongs with the first kind that needs
+   it, not before.
 3. **Confirm the turn-timer defaults with a real playtest** (roadmap open
-   question 2). Ten minutes and ninety seconds are still guesses; they are now
-   at least guesses that something reads.
+   question 2). Ten minutes, ninety seconds, and now sixty seconds for a
+   prompt are still guesses; they are at least guesses that something reads.
 4. **Answer roadmap open question 3** — whether any redistributable room set
    exists — before hand-entering 44 tiles and ~65 cards from a physical copy.
    Ten minutes of looking against hours of transcription.
@@ -648,7 +741,7 @@ Rough, for trend only.
 
 |                     | M0                    | M1                    | M2 (so far)           |
 | ------------------- | --------------------- | --------------------- | --------------------- |
-| Tests               | 49                    | 88                    | 210                   |
+| Tests               | 49                    | 88                    | 240                   |
 | Packages            | 5                     | 5                     | 5                     |
 | Haunts implemented  | 0 / 50                | 0 / 50                | 0 / 50                |
 | Room tiles authored | 0 / 44                | 0 / 44                | 44 / 44 (placeholder) |

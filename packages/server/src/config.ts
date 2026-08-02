@@ -34,6 +34,12 @@ export const config = {
   /** How long a seat must be gone before a majority vote can remove it. */
   removeGraceMs: num('REMOVE_GRACE_SECONDS', 600) * 1000,
   /**
+   * How long a seat gets to answer a prompt before it resolves on its default.
+   * Short, because a prompt blocks every other seat at the table too — unlike
+   * a turn, which only the active seat is spending.
+   */
+  promptTimeoutMs: num('PROMPT_TIMEOUT_SECONDS', 60) * 1000,
+  /**
    * How often the server checks rooms for a due deadline. This is the
    * granularity of the turn clock, not its cost: a TICK is only applied to a
    * room that actually has something due.

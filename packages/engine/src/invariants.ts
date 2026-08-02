@@ -187,6 +187,17 @@ export function checkInvariants(state: GameState): string[] {
       `pending prompt's seat ${state.pending!.seatId} is dead or removed and cannot answer it`,
     );
   }
+  // 7b. A prompt deadline is a real instant or absent. `NaN` is the failure
+  //     that matters here rather than a theoretical one: `now + promptMs` with
+  //     a `promptMs` that never made it into `timers` (a log written before
+  //     the budget existed, recovered without merging) produces a deadline
+  //     that no `now >= deadline` comparison can ever satisfy — a prompt clock
+  //     that looks armed and never fires.
+  if (state.pending && state.pending.deadline !== null) {
+    if (!Number.isFinite(state.pending.deadline)) {
+      problems.push(`pending prompt deadline is not a finite instant`);
+    }
+  }
   if (state.pending?.kind === 'rotate_tile') {
     const { payload, defaultAnswer } = state.pending;
     if (!isRotateTilePayload(payload)) {

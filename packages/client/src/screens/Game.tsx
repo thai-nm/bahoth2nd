@@ -68,6 +68,11 @@ export function Game() {
   const pending = useStore((s) => s.pendingSeq !== null);
   // Called before the early return: hooks may not be conditional.
   const remaining = useRemaining(state?.turnDeadline ?? null);
+  // The prompt's own clock, which is a different and much shorter one
+  // (docs/07-ui.md#74: "a countdown if a deadline exists"). Shown in full
+  // rather than only in its last minute, because the whole budget IS about a
+  // minute and it is holding up every seat at the table, not just its owner.
+  const promptRemaining = useRemaining(state?.pending?.deadline ?? null);
 
   // Which floor the board shows. This is transient UI state (docs/07-ui.md
   // #77 allows it for things like which tab is open), not derived game
@@ -306,7 +311,29 @@ export function Game() {
             <div className="panel rotate-prompt">
               {isMyPrompt ? (
                 <>
-                  <h3>Placing: {promptTileName}</h3>
+                  <h3>
+                    Placing: {promptTileName}
+                    {promptRemaining !== null && (
+                      <span
+                        className={
+                          promptRemaining <= 10_000
+                            ? 'rotate-prompt__clock rotate-prompt__clock--urgent'
+                            : 'rotate-prompt__clock'
+                        }
+                        aria-live="polite"
+                      >
+                        {formatRemaining(promptRemaining)}
+                      </span>
+                    )}
+                  </h3>
+                  {/* Naming the consequence, not just the number: the
+                      countdown is only reassuring if you know the tile still
+                      gets placed when it runs out. */}
+                  <p className="rotate-prompt__hint">
+                    {promptRemaining === null
+                      ? 'Choose a rotation.'
+                      : 'If time runs out, it is placed as shown to everyone else.'}
+                  </p>
                   <div className="actions">
                     <button
                       type="button"
@@ -348,6 +375,11 @@ export function Game() {
                 // everyone but the prompted seat while this is pending).
                 <p>
                   {promptSeatName} is placing the {promptTileName}…
+                  {promptRemaining !== null && (
+                    <span className="rotate-prompt__clock" aria-live="polite">
+                      {formatRemaining(promptRemaining)}
+                    </span>
+                  )}
                 </p>
               )}
             </div>

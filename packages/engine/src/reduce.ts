@@ -39,6 +39,13 @@ import type { Character, Content } from '@bahoth/content';
 import { checkInvariants } from './invariants.js';
 import { drawTile, legalRotations } from './discovery.js';
 import {
+  armPromptDeadline,
+  legalAnswersFor,
+  promptExpired,
+  raisePrompt,
+  validateAnswer,
+} from './prompts.js';
+import {
   activePlayers,
   canStart,
   getHostSeat,
@@ -128,6 +135,8 @@ function dispatch(state: GameState, action: GameAction, content: Content): Reduc
       return moveThrough(state, action.seat, action.dir, content);
     case 'ROTATE_TILE':
       return rotateTile(state, action.seat, action.rotation, content);
+    case 'ANSWER':
+      return answerPrompt(state, action.seat, action.promptId, action.answer, content);
 
     // Declared in the protocol, implemented in later milestones.
     case 'USE_ITEM':
@@ -136,7 +145,6 @@ function dispatch(state: GameState, action: GameAction, content: Content): Reduc
     case 'ROOM_ACTION':
     case 'ATTACK':
     case 'ASSIGN_DAMAGE':
-    case 'ANSWER':
       return fail(
         'UNKNOWN_ACTION',
         `${action.t} is not implemented until a later milestone`,
@@ -485,14 +493,14 @@ function moveThrough(
     return finishDiscovery(withDraw, seat, payload, rots[0]!, content);
   }
 
-  const pending: PendingPrompt = {
-    id: `prompt_${state.version}`, // deterministic for replay; never a counter or random id
+  // `deadline` starts null and is armed by the next TICK (prompts.ts), for the
+  // same reason the turn clock is: this action carries no `now`.
+  const pending: PendingPrompt = raisePrompt(state, {
     seatId: seat,
     kind: 'rotate_tile',
     payload,
-    deadline: null, // server-set deadlines are the next item, not this one
     defaultAnswer: rots[0]!,
-  };
+  });
 
   return {
     state: { ...withDraw, pending },
@@ -576,7 +584,73 @@ function finishDiscovery(
 }
 
 /**
+ * Resume the pipeline at the step a prompt suspended (docs/05-engine.md#56).
+ *
+ * The one place a prompt turns back into game state, reached by all four
+ * callers: `ANSWER`, `ROTATE_TILE`, a prompt timing out on its own clock, and
+ * a prompt whose owner is leaving. `answer` has already been through
+ * `validateAnswer` at every one of them — including the timeout, so a default
+ * answer cannot do something no player could have chosen.
+ *
+ * A kind with no resume step clears the prompt. That is safe for every kind
+ * that exists today because none of them can be raised; it stops being safe
+ * the moment one is, which is why `PROMPT_HANDLERS` is a total record — a new
+ * kind cannot reach this switch without the compiler asking about it.
+ */
+function resumePrompt(
+  state: GameState,
+  prompt: PendingPrompt,
+  answer: unknown,
+  content: Content,
+): ReduceResult {
+  if (prompt.kind === 'rotate_tile' && isRotateTilePayload(prompt.payload)) {
+    return finishDiscovery(
+      state,
+      prompt.seatId,
+      prompt.payload,
+      answer as Rotation,
+      content,
+    );
+  }
+  return { state: { ...state, pending: null }, events: [] };
+}
+
+/**
+ * The single gate every player-supplied answer passes through.
+ *
+ * `promptId` is null for `ROTATE_TILE`, which carries no id, and a real id for
+ * `ANSWER`. Checking it is the whole reason the field exists: a client
+ * answering the prompt it *saw* must not land on the prompt that replaced it
+ * while its message was in flight. `ROTATE_TILE` cannot make that check and
+ * keeps its previous behaviour rather than gaining a field the protocol does
+ * not carry.
+ */
+function answerPrompt(
+  state: GameState,
+  seat: SeatId,
+  promptId: string | null,
+  answer: unknown,
+  content: Content,
+): ReduceResult {
+  const pending = state.pending;
+  if (!pending) return fail('PROMPT_PENDING', 'There is no prompt to answer');
+  if (pending.seatId !== seat) {
+    return fail('PROMPT_MISMATCH', 'This is not your prompt to answer');
+  }
+  if (promptId !== null && promptId !== pending.id) {
+    return fail('PROMPT_MISMATCH', `Prompt ${promptId} is not the prompt now pending`);
+  }
+  if (!validateAnswer(pending, answer)) {
+    return fail('ILLEGAL_MOVE', `Not a legal answer to a ${pending.kind} prompt`);
+  }
+
+  return resumePrompt(state, pending, answer, content);
+}
+
+/**
  * `ROTATE_TILE { rotation }`: the seat's answer to a `rotate_tile` prompt.
+ * Sugar over `ANSWER` — the kind check is what keeps its error codes specific,
+ * everything after it is the generic path.
  */
 function rotateTile(
   state: GameState,
@@ -584,19 +658,10 @@ function rotateTile(
   rotation: Rotation,
   content: Content,
 ): ReduceResult {
-  const pending = state.pending;
-  if (!pending) return fail('PROMPT_PENDING', 'There is no prompt to answer');
-  if (pending.kind !== 'rotate_tile' || pending.seatId !== seat) {
-    return fail('PROMPT_MISMATCH', 'This is not your prompt to answer');
+  if (state.pending && state.pending.kind !== 'rotate_tile') {
+    return fail('PROMPT_MISMATCH', 'The pending prompt is not a tile rotation');
   }
-  if (!isRotateTilePayload(pending.payload)) {
-    return fail('INVARIANT_VIOLATION', 'Malformed rotate_tile prompt payload');
-  }
-  if (!pending.payload.legalRotations.includes(rotation)) {
-    return fail('ILLEGAL_MOVE', `${rotation} does not put a door back on the entry`);
-  }
-
-  return finishDiscovery(state, seat, pending.payload, rotation, content);
+  return answerPrompt(state, seat, null, rotation, content);
 }
 
 function endTurn(state: GameState, seat: SeatId, content: Content): ReduceResult {
@@ -924,25 +989,26 @@ function turnBudget(state: GameState): number {
  * than dropping it: the tile is already off the deck the moment the prompt
  * was raised (see `moveThrough`), so discarding `pending` here would make
  * content vanish — an explorer stuck mid-doorway, a tile that is nowhere.
- * No other prompt kind exists yet (the generic `PendingPrompt` lifecycle —
- * server-set deadlines, `ANSWER`, defaults for kinds that do not exist yet —
- * is the next milestone item), so every other kind just clears, as before.
+ *
+ * The default goes through `validateAnswer` like any other answer, so a
+ * timeout can only ever do something the seat could have chosen. If the
+ * default is somehow not legal — invariant 7 says it cannot be for
+ * `rotate_tile`, but this function must not be the place that finds out — the
+ * first enumerable legal answer stands in, because for a `rotate_tile` prompt
+ * "clear it instead" means losing a drawn tile.
  */
 function resolvePromptWithDefault(state: GameState, content: Content): ReduceResult {
   const pending = state.pending;
   if (!pending) return { state, events: [] };
 
-  if (pending.kind === 'rotate_tile' && isRotateTilePayload(pending.payload)) {
-    return finishDiscovery(
-      state,
-      pending.seatId,
-      pending.payload,
-      pending.defaultAnswer as Rotation,
-      content,
-    );
+  let answer = pending.defaultAnswer;
+  if (!validateAnswer(pending, answer)) {
+    const fallback = legalAnswersFor(pending)?.[0];
+    if (fallback === undefined) return { state: { ...state, pending: null }, events: [] };
+    answer = fallback;
   }
 
-  return { state: { ...state, pending: null }, events: [] };
+  return resumePrompt(state, pending, answer, content);
 }
 
 /**
@@ -952,10 +1018,17 @@ function resolvePromptWithDefault(state: GameState, content: Content): ReduceRes
  * stays pure and a replayed log reproduces the same deadlines
  * (docs/05-engine.md#52-actions). A TICK does three things, in order:
  *
- *   1. resolves a prompt whose own deadline has passed;
+ *   1. arms an unarmed prompt clock, or resolves a prompt whose deadline has
+ *      passed on its `defaultAnswer` — never both in one tick;
  *   2. arms the turn clock if it is not running yet — this is why the first
  *      TICK of a turn changes state even though nothing has expired;
  *   3. ends the turn if the turn clock has expired.
+ *
+ * The prompt clock is much shorter than the turn clock (`timers.promptMs`),
+ * because a prompt blocks every seat at the table and a turn blocks only the
+ * seat spending it. A prompt therefore times out *within* a turn: play resumes
+ * on the default answer and the turn carries on, rather than the whole turn
+ * being forfeited to one unanswered decision.
  *
  * A TICK with nothing to do returns the state unchanged, by reference, so the
  * server neither logs it nor counts it as room activity.
@@ -979,8 +1052,17 @@ function tick(state: GameState, now: number, content: Content): ReduceResult {
   next = removals.state;
   events.push(...removals.events);
 
+  // A prompt gets its own clock, armed here because raising it happened inside
+  // an action that carried no `now`. Arming and expiring are deliberately
+  // separate ticks: arming to `now + promptMs` and then testing `now >=
+  // deadline` in the same pass would fire instantly whenever `promptMs` is 0,
+  // and would read as "the prompt expired before anyone saw it".
+  const armed = armPromptDeadline(next, now);
+  const wasUnarmed = armed !== next;
+  next = armed;
+
   const pending = next.pending;
-  if (pending && pending.deadline !== null && now >= pending.deadline) {
+  if (pending && !wasUnarmed && promptExpired(pending, now)) {
     const resolved = resolvePromptWithDefault(next, content);
     next = resolved.state;
     events.push(...resolved.events);
