@@ -235,6 +235,16 @@ function describe(e: GameEvent): string {
       return `${e.seat} ${e.connected ? 'reconnected' : 'disconnected'}`;
     case 'rolled':
       return `${e.seat} rolled ${e.total} (${e.dice.join(', ')}) for ${e.reason}`;
+    // Wiring the board (this PR) makes `moved` and `discovered` events real
+    // for the first time; without a case they fell through to the bare event
+    // name below, which is exactly what a "debug JSON panel" narration looks
+    // like. `describe` has no store access (see toLogLine), so seat ids stay
+    // ids here rather than names — resolving them to `seatName` like the
+    // `chat` case above is the event log panel's own M2 item, not this one's.
+    case 'moved':
+      return `${e.seat} moved to ${e.to}`;
+    case 'discovered':
+      return `${e.seat} discovered ${e.placed.tileId}`;
     case 'game_over':
       return `Game over: ${e.result.reason}`;
     case 'log':

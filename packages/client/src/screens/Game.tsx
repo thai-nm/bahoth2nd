@@ -1,15 +1,21 @@
 /**
- * M0 game screen: a debug panel, deliberately.
+ * The game screen (docs/07-ui.md#72-game-layout).
  *
- * The board, player rail, and action bar arrive in M2 once there is a house to
- * render. What this screen proves is the spine: the server's authoritative
- * snapshot round-trips, turn order advances, and legality comes from the
- * engine rather than from the UI.
+ * Players rail (left) and log (right) are the same `.panel` markup the M0
+ * spine used; the centre column is the board, wired up here for the first
+ * time now that `getReachable` (docs/05-engine.md#57) exists. This is
+ * deliberately the only place in the client that calls it: the highlight the
+ * player sees and the engine's legality answer are the same function call,
+ * so a UI bug can never let someone attempt a move the server would reject.
  */
 
 import { useEffect, useState } from 'react';
 import { useStore } from '../store.js';
-import { getLegalActions } from '@bahoth/engine';
+import { getLegalActions, getReachable } from '@bahoth/engine';
+import type { Floor } from '@bahoth/shared';
+import { Board } from '../board/Board.js';
+import { FloorTabs } from '../board/FloorTabs.js';
+import { floorOf, pawnsFromState } from '../board/pawns.js';
 
 /** Seconds of countdown to show. Below this, the clock is worth watching. */
 const VISIBLE_WITHIN_MS = 60 * 1000;
@@ -49,6 +55,22 @@ export function Game() {
   // Called before the early return: hooks may not be conditional.
   const remaining = useRemaining(state?.turnDeadline ?? null);
 
+  // Which floor the board shows. This is transient UI state (docs/07-ui.md
+  // #77 allows it for things like which tab is open), not derived game
+  // state — the store comment on this file is emphatic that derived state
+  // does not belong in useState. So it is seeded to a fixed default and then
+  // corrected by the effect below from the one piece of derived truth that
+  // matters here: the local player's own floor.
+  const [floor, setFloor] = useState<Floor>('ground');
+  const myLocation = state && seatId ? (state.players[seatId]?.location ?? null) : null;
+  const myFloor = state ? floorOf(state.board, myLocation) : null;
+  useEffect(() => {
+    // Only follow MY pawn. Taking a staircase must not leave the player
+    // staring at a floor they left, but another player crossing floors is
+    // not a reason to yank the view out from under whoever is looking at it.
+    if (myFloor) setFloor(myFloor);
+  }, [myFloor]);
+
   if (!state || !content || !seatId) return <div className="boot">Loading…</div>;
 
   const legal = getLegalActions(state, seatId, content);
@@ -60,6 +82,20 @@ export function Game() {
   const isMyTurn = state.activeSeat === seatId;
   const activeName =
     seats.find((s) => s.seatId === state.activeSeat)?.name ?? state.activeSeat;
+
+  const { byFloor } = pawnsFromState(state, content, seatId);
+
+  // The engine's answer, never a second local "can I move there?" check
+  // (docs/05-engine.md#57). It already returns [] for anything that is not
+  // this seat's live turn, so the highlight switches itself off with no
+  // guard needed here. It spans floors (a staircase link crosses one), but
+  // `Board` renders a single floor, so filter to the one on screen — passing
+  // the unfiltered list through would silently drop a same-turn destination
+  // on another floor, which reads as the engine being wrong rather than as
+  // "look at the other tab".
+  const reachableHere = getReachable(state, seatId, content).filter(
+    (id) => floorOf(state.board, id) === floor,
+  );
 
   // Nobody should lose a turn to a clock they didn't know existed, and nobody
   // needs a ten-minute countdown in their face either: show it in the last
@@ -96,7 +132,7 @@ export function Game() {
       </header>
 
       <div className="game__body">
-        <section className="panel">
+        <section className="panel game__players">
           <h2>Players</h2>
           <ul className="seatlist">
             {state.turnOrder.map((sid) => {
@@ -165,24 +201,40 @@ export function Game() {
               Concede
             </button>
           </div>
-          <p className="hint">
-            The board arrives in M2. This screen proves the spine: authoritative
-            snapshots, turn order, and engine-driven legality.
-          </p>
+          {/* The full players-rail design (docs/07-ui.md#72: portraits, 8-slot
+              trait strips, item rows) is out of scope here. Traits are stored
+              as track indices with no death detection surfaced yet (that
+              lands with combat in M3), so this stays the plain seat list. */}
         </section>
 
-        <section className="panel">
+        <section className="panel game__board">
+          <FloorTabs active={floor} onSelect={setFloor} pawnsByFloor={byFloor} />
+          <Board
+            board={state.board}
+            content={content}
+            floor={floor}
+            pawns={byFloor[floor]}
+            reachable={reachableHere}
+            onMoveTo={
+              pending
+                ? undefined
+                : (placedId) => send({ t: 'MOVE', seat: seatId, to: placedId })
+            }
+            // Discovery (MOVE_THROUGH) is not implemented in the engine yet —
+            // it is still UNKNOWN_ACTION there. Not passing a handler is what
+            // keeps every doorway arrow dead: `Board` dims and disables them
+            // whenever `onMoveThrough` is undefined, so this is the whole
+            // fix, not a stopgap needing a follow-up.
+          />
+        </section>
+
+        <section className="panel game__log">
           <h2>Log</h2>
           <ul className="log">
             {log.slice(-40).map((l) => (
               <li key={l.id}>{l.text}</li>
             ))}
           </ul>
-        </section>
-
-        <section className="panel panel--wide">
-          <h2>State (redacted, as received)</h2>
-          <pre className="json">{JSON.stringify(state, null, 2)}</pre>
         </section>
       </div>
     </main>

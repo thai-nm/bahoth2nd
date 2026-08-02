@@ -3,9 +3,11 @@
  *
  * Presentational only: it derives no game state and holds no game state in
  * `useState`, just transient UI state (pan/zoom) per docs/07-ui.md#77. The
- * movement graph does not exist yet, so `reachable` arrives as a prop instead
- * of being computed here from `getReachable` — nothing in this file may
- * depend on that function or on any adjacency/connectivity logic.
+ * movement graph exists now (`getReachable`, `movement.ts`), but this
+ * component still takes `reachable` as a prop rather than computing it —
+ * that was always the point of a presentational component: the caller
+ * (`Game.tsx`) asks the engine, this file only draws the answer. Nothing in
+ * this file may depend on `getReachable` or any adjacency/connectivity logic.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -36,7 +38,7 @@ interface BoardProps {
   content: Content;
   floor: Floor;
   pawns: ReadonlyArray<Pawn>;
-  /** Will come from getReachable once the movement graph lands. Until then the caller supplies it. */
+  /** Comes from `getReachable`, filtered to this floor — the caller's job, not this component's. */
   reachable?: readonly PlacedId[] | undefined;
   onMoveTo?: ((placedId: PlacedId) => void) | undefined;
   onMoveThrough?: ((placedId: PlacedId, dir: Dir) => void) | undefined;

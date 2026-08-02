@@ -5,10 +5,12 @@ import { Lobby } from './screens/Lobby.js';
 import { Game } from './screens/Game.js';
 import { BoardPreview } from './screens/BoardPreview.js';
 
-// Dev-only escape hatch to see the board before the movement graph exists
-// (see BoardPreview.tsx). `import.meta.env.DEV` is statically false in a
-// production build, so this branch — and BoardPreview's import — is dead
-// code Vite strips entirely; it cannot render outside a dev server.
+// Dev-only escape hatch to see the board with no server and no engine
+// running (see BoardPreview.tsx) — useful for pure rendering work even now
+// that the real game screen renders the board too. `import.meta.env.DEV` is
+// statically false in a production build, so this branch — and
+// BoardPreview's import — is dead code Vite strips entirely; it cannot
+// render outside a dev server.
 const SHOW_BOARD_PREVIEW = import.meta.env.DEV && location.hash === '#board-preview';
 
 export function App() {
