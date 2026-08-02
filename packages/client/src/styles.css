@@ -460,6 +460,24 @@ h2 {
 .rotate-prompt p {
   margin: 0;
 }
+/* The prompt's own clock. Tabular numerals so the countdown does not jitter
+   the heading sideways once a second. */
+.rotate-prompt__clock {
+  margin-left: 8px;
+  font-family: ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+  color: var(--muted);
+}
+.rotate-prompt__clock--urgent {
+  color: var(--danger);
+  font-weight: 600;
+}
+.rotate-prompt__hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
 
 .hint {
   color: var(--muted);

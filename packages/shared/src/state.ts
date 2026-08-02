@@ -44,6 +44,13 @@ export interface TurnTimers {
   /** The shorter budget once the active seat has dropped. */
   disconnectedMs: number;
   /**
+   * How long a seat gets to answer a `PendingPrompt` before it resolves on its
+   * own `defaultAnswer`. Much shorter than `turnMs`, because a prompt blocks
+   * the whole table rather than just its owner
+   * (docs/06-networking.md#disconnection-behaviour).
+   */
+  promptMs: number;
+  /**
    * How long a seat must be gone before the table's votes to remove it take
    * effect. Long, because coming back from a dead laptop should be possible
    * (docs/06-networking.md#disconnection-behaviour).
@@ -109,20 +116,39 @@ export interface DeckState {
   drawCount?: number;
 }
 
-export type PromptKind =
-  | 'rotate_tile'
-  | 'assign_damage'
-  | 'choose_target'
-  | 'choose_card'
-  | 'choose_room'
-  | 'confirm';
+/**
+ * Every kind of decision the engine can suspend on. Declared as a value so
+ * both the engine's handler table and its tests can iterate the full set —
+ * a kind that exists in the type but that nothing has taught the prompt
+ * machinery about is exactly the gap this list closes.
+ */
+export const PROMPT_KINDS = [
+  'rotate_tile',
+  'assign_damage',
+  'choose_target',
+  'choose_card',
+  'choose_room',
+  'confirm',
+] as const;
+
+export type PromptKind = (typeof PROMPT_KINDS)[number];
 
 export interface PendingPrompt {
   id: string;
   seatId: SeatId;
   kind: PromptKind;
   payload: unknown;
-  /** ms epoch, written by the server so the engine never reads a clock. */
+  /**
+   * ms epoch after which the prompt resolves on `defaultAnswer`, or null while
+   * the clock is not armed yet.
+   *
+   * Armed by the first `TICK` after the prompt is raised, exactly as
+   * `turnDeadline` is: the engine may not read a clock, so `now` has to arrive
+   * in an action, and arriving in an action is also what makes a replayed log
+   * reproduce the same deadline. docs/04-data-model.md calls this "set by the
+   * server", which is true of where `now` comes from and not of who writes the
+   * field — the reducer is still the only mutator.
+   */
   deadline: number | null;
   defaultAnswer: unknown;
 }

@@ -74,6 +74,7 @@ export class RoomManager {
     return {
       turnMs: config.turnTimeoutMs,
       disconnectedMs: config.disconnectTimeoutMs,
+      promptMs: config.promptTimeoutMs,
       removeGraceMs: config.removeGraceMs,
     };
   }
@@ -112,7 +113,8 @@ export class RoomManager {
 
   /**
    * Whether this room has a deadline the engine needs to be told about — an
-   * unarmed turn clock, an expired turn, or an expired prompt.
+   * unarmed turn clock, an unarmed prompt clock, an expired turn, or an
+   * expired prompt.
    *
    * The server checks this cheaply on an interval and only then issues a
    * `TICK`, so a room costs one logged action to arm a turn's clock and one
@@ -121,7 +123,12 @@ export class RoomManager {
    */
   isTickDue(room: Room, now: number): boolean {
     const s = room.state;
+    // A prompt with no deadline yet needs one armed — the engine cannot arm it
+    // without a TICK to learn `now` from. Without this, a prompt raised in a
+    // room where nothing else is due would sit unarmed forever and the whole
+    // prompt clock would be dead code.
     const pending = s.pending;
+    if (pending && pending.deadline === null) return true;
     if (pending && pending.deadline !== null && now >= pending.deadline) return true;
 
     // A removal vote whose grace period has run out. Checked in every phase:
@@ -291,7 +298,7 @@ export class RoomManager {
           seed?: number;
           code?: string;
           createdAt?: number;
-          timers?: TurnTimers;
+          timers?: Partial<TurnTimers>;
         };
         if (!header.header || typeof header.seed !== 'number' || !header.code) {
           throw new Error('missing or malformed header');
@@ -306,11 +313,16 @@ export class RoomManager {
 
         const entries = lines.slice(1).map((l) => JSON.parse(l) as LoggedAction);
         // Pre-timer logs have no header timers; today's config is the only
-        // sensible stand-in for those.
+        // sensible stand-in for those. MERGED rather than substituted: a log
+        // written before a budget existed carries the others, and `??` would
+        // throw those away — while a log written before `promptMs` existed
+        // would otherwise recover with `promptMs: undefined` and arm every
+        // prompt deadline to `now + undefined`, i.e. NaN, i.e. a prompt clock
+        // that silently never fires.
         let state = createInitialState({
           seed: header.seed,
           content: this.content,
-          timers: header.timers ?? this.timers(),
+          timers: { ...this.timers(), ...header.timers },
         });
         const seats = new Map<SeatId, Seat>();
 

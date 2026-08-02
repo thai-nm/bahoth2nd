@@ -448,6 +448,57 @@ describe('the turn clock over the wire', () => {
     expect(live.state.turnDeadline).toBeNull();
     expect(live.state.version).toBe(version);
   });
+
+  /**
+   * The prompt clock, over the wire. A `confirm` prompt is planted rather than
+   * driven through a real discovery: whether the fixture house happens to
+   * offer a tile with two legal rotations is not what these assertions are
+   * about, and a kind nothing raises is the harsher case anyway — it is the
+   * one with no resume step to fall back on.
+   */
+  it('arms an unarmed prompt clock on the sweep, then resolves it', async () => {
+    const { host, live } = await startedRoom();
+    const seat = live.state.activeSeat!;
+
+    // Arm the TURN clock first, so it is not what makes the sweep below fire.
+    // Without this the test passes even with `isTickDue` blind to prompts:
+    // a freshly started room has an unarmed turn clock, which is due on its
+    // own and drags the prompt's arming along with it.
+    harness.gateway.sweepTimers(Date.now());
+    expect(live.state.turnDeadline).not.toBeNull();
+
+    live.state = {
+      ...live.state,
+      pending: {
+        id: 'prompt_planted',
+        seatId: seat,
+        kind: 'confirm',
+        payload: null,
+        deadline: null,
+        defaultAnswer: true,
+      },
+    };
+
+    // The server has to notice a prompt that has no deadline yet: the engine
+    // may not read a clock, so without a TICK the prompt sits unarmed forever
+    // and the whole prompt clock is dead code.
+    const now = Date.now();
+    harness.gateway.sweepTimers(now);
+    expect(live.state.pending?.deadline).toBe(now + live.state.timers.promptMs);
+
+    // The deadline reaches the client, which is what lets it show a countdown.
+    const snap = await host.waitForState(
+      (m) =>
+        m.state.pending?.deadline !== null && m.state.pending?.deadline !== undefined,
+    );
+    expect(snap.state.pending?.deadline).toBe(live.state.pending?.deadline);
+
+    harness.gateway.sweepTimers(live.state.pending!.deadline!);
+    expect(live.state.pending).toBeNull();
+    // The turn is still that seat's: a prompt times out inside a turn rather
+    // than costing the whole one.
+    expect(live.state.activeSeat).toBe(seat);
+  });
 });
 
 describe('the remove-player vote over the wire', () => {
@@ -578,4 +629,78 @@ describe('crash recovery', () => {
 
     await second.close();
   });
+
+  it('fills in a timer budget a log predates, rather than recovering a NaN clock', async () => {
+    // A log written before `promptMs` existed carries the other three budgets
+    // and not that one. Substituting the header wholesale (`header.timers ??
+    // this.timers()`) hands the room a `promptMs: undefined`, every prompt
+    // deadline becomes `now + undefined` — NaN — and `now >= NaN` is false
+    // forever: a prompt clock that looks armed and never fires. The header is
+    // merged over today's defaults instead.
+    const code = 'OLDLOG';
+    fs.writeFileSync(
+      path.join(dataDir, `${code}.jsonl`),
+      `${JSON.stringify({
+        header: true,
+        seed: 7,
+        code,
+        createdAt: Date.now(),
+        timers: { turnMs: 1000, disconnectedMs: 500, removeGraceMs: 2000 },
+      })}\n`,
+    );
+
+    const server = await startServer();
+    const room = server.rooms.get(code);
+    expect(room, 'the old-format log should still recover').toBeDefined();
+
+    // The budgets the log DID record are the ones it ran with, not today's.
+    expect(room!.state.timers.turnMs).toBe(1000);
+    // And the one it could not record is a real number.
+    expect(Number.isFinite(room!.state.timers.promptMs)).toBe(true);
+
+    room!.state = {
+      ...room!.state,
+      pending: {
+        id: 'p',
+        seatId: 'seat_0',
+        kind: 'confirm',
+        payload: null,
+        deadline: null,
+        defaultAnswer: true,
+      },
+      players: {
+        seat_0: {
+          ...makeRecoveredPlayer(),
+        },
+      },
+    };
+    const now = Date.now();
+    server.gateway.sweepTimers(now);
+    expect(room!.state.pending?.deadline).toBe(now + room!.state.timers.promptMs);
+    expect(Number.isNaN(room!.state.pending?.deadline)).toBe(false);
+
+    await server.close();
+  });
 });
+
+/** A minimal seated player, so a planted prompt targets a real seat (invariant 7). */
+function makeRecoveredPlayer() {
+  return {
+    seatId: 'seat_0',
+    name: 'Ana',
+    charId: null,
+    traits: { speed: 0, might: 0, sanity: 0, knowledge: 0 },
+    location: null,
+    movesLeft: 0,
+    cameFrom: null,
+    items: [],
+    omens: [],
+    isTraitor: false,
+    isDead: false,
+    connected: false,
+    disconnectedAt: null,
+    removed: false,
+    hasAttackedThisTurn: false,
+    flags: {},
+  };
+}
