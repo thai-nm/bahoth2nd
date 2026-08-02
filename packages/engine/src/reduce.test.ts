@@ -739,7 +739,7 @@ describe('unimplemented actions', () => {
     const g = startedGame();
     const r = reduce(
       g.state,
-      { t: 'MOVE', seat: g.state.activeSeat!, to: 'nowhere' },
+      { t: 'MOVE_THROUGH', seat: g.state.activeSeat!, dir: 'n' },
       content,
     );
     expect(r.error?.code).toBe('UNKNOWN_ACTION');

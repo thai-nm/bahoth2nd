@@ -14,9 +14,13 @@ import {
   MAX_PLAYERS,
   MIN_PLAYERS,
   TRAITS,
+  cellKey,
+  placedIdFor,
+  type BoardState,
   type GameAction,
   type GameEvent,
   type GameState,
+  type PlacedId,
   type PlayerState,
   type RuleError,
   type RuleErrorCode,
@@ -32,6 +36,7 @@ import {
   nextSeatInOrder,
   takenColours,
 } from './selectors.js';
+import { beginTurnFor, findPath } from './movement.js';
 import { shuffle } from './rng.js';
 
 export interface ReduceResult {
@@ -94,9 +99,9 @@ function dispatch(state: GameState, action: GameAction, content: Content): Reduc
     case 'CHOOSE_CHAR':
       return chooseChar(state, action.seat, action.charId, content);
     case 'START_GAME':
-      return startGame(state, action.seat);
+      return startGame(state, action.seat, content);
     case 'END_TURN':
-      return endTurn(state, action.seat);
+      return endTurn(state, action.seat, content);
     case 'VOTE_REMOVE':
       return voteRemove(state, action.seat, action.target, action.vote);
     case 'DISCONNECT':
@@ -104,12 +109,13 @@ function dispatch(state: GameState, action: GameAction, content: Content): Reduc
     case 'RECONNECT':
       return setConnected(state, action.seat, true);
     case 'TICK':
-      return tick(state, action.now);
+      return tick(state, action.now, content);
     case 'CONCEDE':
-      return concede(state, action.seat);
+      return concede(state, action.seat, content);
+    case 'MOVE':
+      return move(state, action.seat, action.to, content);
 
     // Declared in the protocol, implemented in later milestones.
-    case 'MOVE':
     case 'MOVE_THROUGH':
     case 'ROTATE_TILE':
     case 'USE_ITEM':
@@ -223,7 +229,32 @@ function chooseChar(
   };
 }
 
-function startGame(state: GameState, seat: SeatId): ReduceResult {
+/**
+ * Place every layout tile and stand every explorer in the start tile
+ * (D-e). Ids are cell-derived (`placedIdFor`) rather than counted, so this
+ * cannot desync from `board.index` — invariant 3b checks the two agree.
+ */
+function placeStartingLayout(content: Content): BoardState {
+  const placed: BoardState['placed'] = {};
+  const index: BoardState['index'] = { basement: {}, ground: {}, upper: {} };
+  for (const t of content.house.layout) {
+    const id = placedIdFor(t.floor, t.x, t.y);
+    placed[id] = {
+      id,
+      tileId: t.tileId,
+      floor: t.floor,
+      x: t.x,
+      y: t.y,
+      rotation: t.rotation,
+      discoveredBy: null,
+      flags: {},
+    };
+    index[t.floor][cellKey(t.x, t.y)] = id;
+  }
+  return { placed, index };
+}
+
+function startGame(state: GameState, seat: SeatId, content: Content): ReduceResult {
   if (state.phase !== 'lobby') return fail('WRONG_PHASE', 'The game has already started');
   if (getHostSeat(state) !== seat)
     return fail('NOT_HOST', 'Only the host can start the game');
@@ -245,32 +276,49 @@ function startGame(state: GameState, seat: SeatId): ReduceResult {
     players.map((p) => p.seatId),
   );
 
+  const board = placeStartingLayout(content);
+  const startLayout = content.house.layout.find(
+    (t) => t.tileId === content.house.startTile,
+  );
+  // The loader guarantees startTile names a pre-placed tile
+  // (assertHouseCoherent), so this is never undefined for content that
+  // passed buildContent.
+  const startId: PlacedId = placedIdFor(
+    startLayout!.floor,
+    startLayout!.x,
+    startLayout!.y,
+  );
+
   // Trait indices are already set from each character's printed starting slot
-  // by CHOOSE_CHAR. Real starting positions and the Entrance Hall arrive in M2;
-  // until then players have no location, which the invariants allow outside
-  // explore/haunt.
+  // by CHOOSE_CHAR. Every explorer stands in the Entrance Hall to start
+  // (docs/02-rules-model.md#23-the-house).
   const nextPlayers: Record<SeatId, PlayerState> = { ...state.players };
   for (const p of players) {
-    nextPlayers[p.seatId] = { ...p };
+    nextPlayers[p.seatId] = { ...p, location: startId, cameFrom: null };
   }
 
   const first = turnOrder[0] ?? null;
+  let nextState: GameState = {
+    ...state,
+    rng: nextRng,
+    // Straight to `explore`: characters are chosen in the lobby, so the
+    // `setup` phase has nothing to do.
+    phase: 'explore',
+    players: nextPlayers,
+    turnOrder,
+    activeSeat: first,
+    round: 1,
+    // Unarmed: the engine cannot read a clock, so the first TICK of the turn
+    // sets the deadline.
+    turnDeadline: null,
+    board,
+  };
+  // Only the first active seat gets a movement budget this turn (D-f);
+  // everyone else keeps the movesLeft: 0 they were seeded with in makePlayer.
+  if (first) nextState = beginTurnFor(nextState, first, content);
+
   return {
-    state: {
-      ...state,
-      rng: nextRng,
-      // Straight to `explore`: characters are chosen in the lobby, so the
-      // `setup` phase has nothing to do. The starting tiles and player
-      // placement arrive in M2.
-      phase: 'explore',
-      players: nextPlayers,
-      turnOrder,
-      activeSeat: first,
-      round: 1,
-      // Unarmed: the engine cannot read a clock, so the first TICK of the turn
-      // sets the deadline.
-      turnDeadline: null,
-    },
+    state: nextState,
     events: [
       { t: 'game_started', turnOrder },
       ...(first ? [{ t: 'turn_started', seat: first, round: 1 } as GameEvent] : []),
@@ -280,7 +328,62 @@ function startGame(state: GameState, seat: SeatId): ReduceResult {
 
 // --- turn loop -------------------------------------------------------------
 
-function endTurn(state: GameState, seat: SeatId): ReduceResult {
+/**
+ * `MOVE { to }` (D-g). `to` may be anywhere `getReachable` offers, not just
+ * an adjacent room — docs/07-ui.md has the client highlight `getReachable()`
+ * and issue `MOVE` on a click, so the engine has to walk a shortest legal
+ * path itself. One `moved` event per room entered (D-b), so the log and any
+ * future animation see each step; the known limitation (which of several
+ * equal-length paths gets walked becomes player-visible once M3 gives rooms
+ * `onEnter` effects) is recorded in docs/11-progress.md.
+ */
+function move(
+  state: GameState,
+  seat: SeatId,
+  to: PlacedId,
+  content: Content,
+): ReduceResult {
+  if (!['explore', 'haunt'].includes(state.phase)) {
+    return fail('WRONG_PHASE', `Cannot move during ${state.phase}`);
+  }
+  const player = state.players[seat];
+  if (!player) return fail('UNKNOWN_SEAT', `No such seat: ${seat}`);
+  if (state.activeSeat !== seat) return fail('NOT_YOUR_TURN', 'It is not your turn');
+  if (state.pending) return fail('PROMPT_PENDING', 'Answer the pending prompt first');
+  if (player.isDead || player.removed || player.location === null) {
+    return fail('ILLEGAL_MOVE', `${seat} cannot move`);
+  }
+  if (!state.board.placed[to]) return fail('ILLEGAL_MOVE', `No such room: ${to}`);
+  if (to === player.location) return fail('ILLEGAL_MOVE', 'Already there');
+
+  const path = findPath(state, seat, to, content);
+  if (!path) {
+    return fail(
+      'ILLEGAL_MOVE',
+      `${to} is not reachable with ${player.movesLeft} move(s) left`,
+    );
+  }
+
+  let nextState = state;
+  const events: GameEvent[] = [];
+  let from = player.location;
+  for (const step of path) {
+    const p = nextState.players[seat]!;
+    nextState = {
+      ...nextState,
+      players: {
+        ...nextState.players,
+        [seat]: { ...p, location: step, cameFrom: from, movesLeft: p.movesLeft - 1 },
+      },
+    };
+    events.push({ t: 'moved', seat, from, to: step });
+    from = step;
+  }
+
+  return { state: nextState, events };
+}
+
+function endTurn(state: GameState, seat: SeatId, content: Content): ReduceResult {
   if (!['explore', 'haunt'].includes(state.phase)) {
     return fail('WRONG_PHASE', `Cannot end a turn during ${state.phase}`);
   }
@@ -302,10 +405,21 @@ function endTurn(state: GameState, seat: SeatId): ReduceResult {
       }
     : state.players;
 
+  // The clock is disarmed, not re-armed: the next TICK arms it with the
+  // budget that suits whoever is now active. beginTurnFor gives `next` its
+  // Speed-based movement budget (D-f) — this is one of the call sites the
+  // plan requires so a seat can never silently end up unable to move.
+  let nextState: GameState = {
+    ...state,
+    players,
+    activeSeat: next,
+    round,
+    turnDeadline: null,
+  };
+  nextState = beginTurnFor(nextState, next, content);
+
   return {
-    // The clock is disarmed, not re-armed: the next TICK arms it with the
-    // budget that suits whoever is now active.
-    state: { ...state, players, activeSeat: next, round, turnDeadline: null },
+    state: nextState,
     events: [
       { t: 'turn_ended', seat },
       { t: 'turn_started', seat: next, round },
@@ -430,7 +544,7 @@ function votesNeeded(state: GameState, target: SeatId): number {
  * vote is cast — the engine has no clock of its own, and the grace period is
  * the whole point of the feature.
  */
-function resolveRemovals(state: GameState, now: number): ReduceResult {
+function resolveRemovals(state: GameState, now: number, content: Content): ReduceResult {
   let next = state;
   const events: GameEvent[] = [];
 
@@ -467,14 +581,15 @@ function resolveRemovals(state: GameState, now: number): ReduceResult {
     };
 
     if (wasActive) {
-      next = {
-        ...next,
-        activeSeat:
-          following === null || following === target
-            ? (next.turnOrder[0] ?? null)
-            : following,
-        turnDeadline: null,
-      };
+      const newActive =
+        following === null || following === target
+          ? (next.turnOrder[0] ?? null)
+          : following;
+      next = { ...next, activeSeat: newActive, turnDeadline: null };
+      // The removed seat's turn budget dies with it; the seat that inherits
+      // the turn gets its own (D-f) — otherwise it would be stuck at
+      // whatever movesLeft: 0 it had while merely waiting its turn.
+      if (newActive) next = beginTurnFor(next, newActive, content);
     }
 
     events.push({
@@ -486,7 +601,7 @@ function resolveRemovals(state: GameState, now: number): ReduceResult {
   return { state: next, events };
 }
 
-function concede(state: GameState, seat: SeatId): ReduceResult {
+function concede(state: GameState, seat: SeatId, content: Content): ReduceResult {
   const player = state.players[seat];
   if (!player) return fail('UNKNOWN_SEAT', `No such seat: ${seat}`);
   if (state.phase === 'game_over') return fail('GAME_OVER', 'The game is already over');
@@ -513,14 +628,23 @@ function concede(state: GameState, seat: SeatId): ReduceResult {
 
   const nextActive =
     state.activeSeat === seat ? nextSeatInOrder(state, seat) : state.activeSeat;
+  const finalActive = nextActive === seat ? (remaining[0]?.seatId ?? null) : nextActive;
+
+  let nextState: GameState = {
+    ...state,
+    players: { ...state.players, [seat]: { ...player, isDead: true } },
+    turnOrder: state.turnOrder.filter((s) => s !== seat),
+    activeSeat: finalActive,
+  };
+  // Only re-arm the budget when the conceding seat was the one whose turn it
+  // was (D-f) — a concede by someone else must not touch the active seat's
+  // movesLeft mid-turn.
+  if (state.activeSeat === seat && finalActive) {
+    nextState = beginTurnFor(nextState, finalActive, content);
+  }
 
   return {
-    state: {
-      ...state,
-      players: { ...state.players, [seat]: { ...player, isDead: true } },
-      turnOrder: state.turnOrder.filter((s) => s !== seat),
-      activeSeat: nextActive === seat ? (remaining[0]?.seatId ?? null) : nextActive,
-    },
+    state: nextState,
     events: [{ t: 'log', text: `${player.name} conceded` }],
   };
 }
@@ -557,7 +681,7 @@ function turnBudget(state: GameState): number {
  * A TICK with nothing to do returns the state unchanged, by reference, so the
  * server neither logs it nor counts it as room activity.
  */
-function tick(state: GameState, now: number): ReduceResult {
+function tick(state: GameState, now: number, content: Content): ReduceResult {
   let next = state;
   const events: GameEvent[] = [];
 
@@ -572,7 +696,7 @@ function tick(state: GameState, now: number): ReduceResult {
     }
   }
 
-  const removals = resolveRemovals(next, now);
+  const removals = resolveRemovals(next, now, content);
   next = removals.state;
   events.push(...removals.events);
 
@@ -606,7 +730,7 @@ function tick(state: GameState, now: number): ReduceResult {
   const seat = next.activeSeat!;
   if (next.pending) next = { ...next, pending: null };
 
-  const ended = endTurn(next, seat);
+  const ended = endTurn(next, seat, content);
   if (ended.error) {
     // Nothing legal to do; disarm rather than spin on an expired deadline.
     return { state: { ...next, turnDeadline: null }, events };

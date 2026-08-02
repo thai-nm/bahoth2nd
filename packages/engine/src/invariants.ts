@@ -6,7 +6,7 @@
  * dead server mid-game is worse.
  */
 
-import { DECK_KINDS, FLOORS, TRAITS, type GameState } from '@bahoth/shared';
+import { DECK_KINDS, FLOORS, TRAITS, placedIdFor, type GameState } from '@bahoth/shared';
 
 export class InvariantError extends Error {
   constructor(
@@ -21,15 +21,18 @@ export class InvariantError extends Error {
 export function checkInvariants(state: GameState): string[] {
   const problems: string[] = [];
 
-  // 1. Locations refer to real tiles, and every living player is on the board
-  //    once the board exists. Keyed off board emptiness rather than a phase
-  //    list so this stays correct once M2 places the starting tiles.
+  // 1. Locations refer to real tiles, and every living, still-playing player
+  //    is on the board once the board exists. Keyed off board emptiness
+  //    rather than a phase list so this stays correct once M2 places the
+  //    starting tiles. `removed` is exempted alongside `isDead`: START_GAME
+  //    only places `activePlayers` (D-e), so a seat voted out before the game
+  //    started never gets a location and never will.
   const boardExists = Object.keys(state.board.placed).length > 0;
   for (const p of Object.values(state.players)) {
     if (p.location !== null && !state.board.placed[p.location]) {
       problems.push(`player ${p.seatId} is at unknown tile ${p.location}`);
     }
-    if (p.location === null && boardExists && !p.isDead) {
+    if (p.location === null && boardExists && !p.isDead && !p.removed) {
       problems.push(`player ${p.seatId} is not on the board during phase ${state.phase}`);
     }
   }
@@ -62,6 +65,16 @@ export function checkInvariants(state: GameState): string[] {
     const key = `${tile.floor}:${tile.x},${tile.y}`;
     if (cells.has(key)) problems.push(`two tiles occupy ${key}`);
     cells.add(key);
+  }
+
+  // 3b. A placed tile's key, its own `id`, and placedIdFor(floor,x,y) all
+  //     agree. Ids are derived from the cell rather than counted (D-a); this
+  //     turns a whole class of index/placement bugs into an assertion.
+  for (const [key, tile] of Object.entries(state.board.placed)) {
+    const expected = placedIdFor(tile.floor, tile.x, tile.y);
+    if (key !== tile.id || tile.id !== expected) {
+      problems.push(`placed tile keyed ${key} has id ${tile.id}, expected ${expected}`);
+    }
   }
 
   // 4. Every card appears exactly once across draw / discard / inPlay.
@@ -150,6 +163,31 @@ export function checkInvariants(state: GameState): string[] {
   // 7. A pending prompt targets a real seat.
   if (state.pending && !state.players[state.pending.seatId]) {
     problems.push(`pending prompt targets unknown seat ${state.pending.seatId}`);
+  }
+
+  // 8. movesLeft is a non-negative integer. Deliberately not "only the active
+  //    seat has movesLeft > 0": later effects grant movement out of turn.
+  for (const p of Object.values(state.players)) {
+    if (!Number.isInteger(p.movesLeft) || p.movesLeft < 0) {
+      problems.push(
+        `player ${p.seatId} has movesLeft ${p.movesLeft}, expected an integer >= 0`,
+      );
+    }
+  }
+
+  // 9. cameFrom, when set, names a placed tile and is never the player's own
+  //    current location — the no-backtrack rule is about the room just left,
+  //    not the room you are standing in.
+  for (const p of Object.values(state.players)) {
+    if (p.cameFrom === null) continue;
+    if (!state.board.placed[p.cameFrom]) {
+      problems.push(
+        `player ${p.seatId} has cameFrom ${p.cameFrom}, which is not a placed tile`,
+      );
+    }
+    if (p.cameFrom === p.location) {
+      problems.push(`player ${p.seatId} has cameFrom equal to its own location`);
+    }
   }
 
   return problems;

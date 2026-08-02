@@ -10,7 +10,7 @@ Living status document. Updated when a milestone moves, not on a schedule.
 | -------------------------------- | -------------- | ------------------------------------------------------------- |
 | M0 — Skeleton and the spine      | ✅ Complete    | Merged — [PR #2](https://github.com/thai-nm/bahoth2nd/pull/2) |
 | M1 — Seats, identity, redaction  | ✅ Complete    | All nine items; D1–D5 closed                                  |
-| M2 — The house                   | 🟨 In progress | Tiles and the renderer done; movement and discovery to come   |
+| M2 — The house                   | 🟨 In progress | Tiles, renderer, and movement done; discovery to come         |
 | M3 — Cards, traits, dice         | ⬜ Not started |                                                               |
 | M4 — The haunt, and five of them | ⬜ Not started |                                                               |
 | M5 — Polish                      | ⬜ Not started |                                                               |
@@ -28,8 +28,8 @@ early (deviation 8).
 | ------------------------------------------------------- | ------------------------------------------------------------------ |
 | Tiles, static links, and the starting layout as content | ✅ Done — [#13](https://github.com/thai-nm/bahoth2nd/pull/13)      |
 | Rotation and grid primitives in `shared`                | ✅ Done — [#14](https://github.com/thai-nm/bahoth2nd/pull/14)      |
-| Board renderer: tiles, doors, pan/zoom, floor tabs      | 🟨 In review — [#15](https://github.com/thai-nm/bahoth2nd/pull/15) |
-| `movement.ts`: adjacency, rotation, links, no-backtrack | ⬜ Not started                                                     |
+| Board renderer: tiles, doors, pan/zoom, floor tabs      | ✅ Done — [#15](https://github.com/thai-nm/bahoth2nd/pull/15)      |
+| `movement.ts`: adjacency, rotation, links, no-backtrack | 🟨 In review — [#16](https://github.com/thai-nm/bahoth2nd/pull/16) |
 | Discovery: tile draw, rotation prompt, placement        | ⬜ Not started                                                     |
 | `PendingPrompt` lifecycle and timeout defaults          | ⬜ Not started                                                     |
 | Event log panel driven by `GameEvent`s                  | ⬜ Not started                                                     |
@@ -104,6 +104,38 @@ calling that safe. The assertion only inspects occupied neighbours, so a
 disconnected tile passes it trivially. There is now a connectivity walk from
 each floor's landing beside it, watched failing by re-floating the tile. Same
 family as D1: **a check the wrong value satisfies is not a check.**
+
+### The movement graph
+
+Then the graph over the house it renders: `getConnections` (grid adjacency after
+rotation, plus static links), `getReachable` / `findPath` (BFS over
+`(position, cameFrom)` rather than position alone, so the no-backtrack rule —
+docs/02-rules-model.md#24 — can depend on how a room was entered), board setup
+at `START_GAME`, and the movement budget refreshed at every point the active
+seat changes (`startGame`, `endTurn`, a removal vote resolving, a concede).
+
+One decision worth recording, with a known limitation:
+
+- **`MOVE { to }` walks a whole shortest legal path, not one room.**
+  `docs/07-ui.md` has the client highlight `getReachable()` and issue `MOVE`
+  on a click of any highlighted room, so the engine finds the path itself
+  (BFS, deterministic neighbour order) and emits one `moved` event per room
+  entered. **Limitation:** when two shortest paths tie, the BFS's neighbour
+  order picks one arbitrarily. That is invisible today because no room does
+  anything on entry — but once M3 gives rooms `onEnter` effects, _which_ path
+  was walked becomes player-visible (different rooms may trigger different
+  card draws), and `MOVE` will need an explicit `via` path from the client
+  rather than letting the engine choose.
+
+31 movement tests, watched failing individually against the line each depends
+on (rotation applied to doors, the no-backtrack check, `oneway_drop`'s reverse
+direction, and the `beginTurnFor` call at every handover) before they passed.
+The last of them is a property rather than a case: for every board these tests
+build, every starting room, every `cameFrom`, and every budget up to 6, each
+path `findPath` returns for a room `getReachable` promised must be a real
+sequence of connections, must not begin by backtracking, and must fit the
+budget. D7 was one instance of that property failing, and one instance is not
+what you want to be asserting.
 
 ---
 
@@ -228,6 +260,44 @@ environment; that decision is deferred rather than made badly now.
 
 Kept rather than deleted: each one is a note on a failure mode worth
 recognising again.
+
+### D7 — The no-backtrack path collapsed to one step when the BFS looped through the start room _(found in review, fixed 2026-08-02)_
+
+`walk`'s predecessor map was keyed by room id alone: `pred.set(nb, entry.pos)`.
+The BFS correctly explores `(position, cameFrom)` states, not positions, so
+that the no-backtrack rule (docs/02-rules-model.md#24, the [RULING]) can
+depend on how a room was entered — but the map it recorded results into threw
+that distinction away. When the search looped back through the start room
+partway through exploring, it re-entered start from a `cameFrom` other than
+the player's real one, and from there rediscovered the room the player was
+actually forbidden to step back into. That state-shaped fact then got written
+into a position-keyed map as `pred[forbidden room] = start`, and
+`findPath` reconstructed a 1-step path straight back into `cameFrom` — the
+no-backtrack rule silently defeated, and `move()` (`reduce.ts`) charging one
+movement point for a path that was really the long way round.
+`getReachable` was unaffected: that room genuinely is reachable, and stayed in
+its result; only the reconstructed path, and so the cost, was wrong.
+
+**Why the tests missed it.** The existing loop test ("cannot move straight
+back into cameFrom, but can reach it around a loop of length >= 2") uses a
+2-step loop and a budget of exactly 3 — enough to get around once, not enough
+for the BFS to loop back through the start room a second time and manufacture
+a bad predecessor. The defect needs the BFS to revisit start itself mid-search,
+which that budget never gives it the room to do.
+
+**Fixed by** keying the predecessor map by BFS state
+(`pos|cameFrom`, `predState`) rather than position, and keeping a separate
+`firstState` map from position to the minimal-depth state that discovered
+it — that map's keys are exactly what `getReachable` returns, so the two
+still share one traversal and cannot disagree. `findPath` reconstructs by
+walking `predState` back to the root _state_, not just back to a position
+match, since a mid-path visit to the start room is a different state from the
+root and must stay in the path. A new test stands a seat in the start room
+having just arrived from a dead-end, with enough budget to loop all the way
+around back to that dead-end, and asserts both the full-length path and that
+`MOVE` spends the full cost. The property test above it asserts the general
+statement instead of that one shape, and both were watched failing against the
+old reconstruction.
 
 ### D5 — Two removals on one tick deadlocked the room _(found in review, fixed 2026-08-01)_
 
@@ -381,19 +451,23 @@ Not bugs — real properties of the design that were not obvious when planning.
 
 In order:
 
-1. **`movement.ts`** — adjacency after rotation, static links, reachability,
-   and the no-backtrack rule, plus placing `house.layout` on the board at
-   `START_GAME` and standing every explorer in the start tile. Both things it
-   reads are now on `main`: the content, and `rotateDoors` in `shared`. It
-   should import that, never re-derive it.
-2. **Wire the board into the game screen** once `getReachable` exists — pass it
-   to the `reachable` prop the renderer already takes, replace the debug JSON
-   panel in `Game.tsx`, and retire the `#board-preview` route or keep it behind
-   the dev flag for rendering work that needs no server.
-3. **Confirm the turn-timer defaults with a real playtest** (roadmap open
+1. **Wire the board into the game screen.** `getReachable` now exists, so the
+   `reachable` prop the renderer already takes has something to be passed —
+   replace the debug JSON panel in `Game.tsx`, and retire the `#board-preview`
+   route or keep it behind the dev flag for rendering work that needs no
+   server. This is the first time the highlight and the engine's legality
+   answer meet, which is the point of having shared them. Note that
+   `BoardPreview` mints its own `PlacedId`s as bare tile ids, which invariant
+   3b now rejects — its pawns and its hardcoded reachable list key off them
+   too, so switching it to `placedIdFor` is that PR's job, not a one-line
+   change. Nothing is broken today: no preview board reaches the engine.
+2. **Discovery**: tile draw, the rotation prompt, and placement — the next
+   engine PR on top of `movement.ts`.
+3. **`PendingPrompt` lifecycle and timeout defaults.**
+4. **Confirm the turn-timer defaults with a real playtest** (roadmap open
    question 2). Ten minutes and ninety seconds are still guesses; they are now
    at least guesses that something reads.
-4. **Answer roadmap open question 3** — whether any redistributable room set
+5. **Answer roadmap open question 3** — whether any redistributable room set
    exists — before hand-entering 44 tiles and ~65 cards from a physical copy.
    Ten minutes of looking against hours of transcription.
 
@@ -403,7 +477,7 @@ Rough, for trend only.
 
 |                     | M0                    | M1                    | M2 (so far)           |
 | ------------------- | --------------------- | --------------------- | --------------------- |
-| Tests               | 49                    | 88                    | 137                   |
+| Tests               | 49                    | 88                    | 169                   |
 | Packages            | 5                     | 5                     | 5                     |
 | Haunts implemented  | 0 / 50                | 0 / 50                | 0 / 50                |
 | Room tiles authored | 0 / 44                | 0 / 44                | 44 / 44 (placeholder) |
