@@ -413,9 +413,20 @@ h2 {
   font-weight: 600;
 }
 
+/*
+ * Players (left) / board (centre) / log (right), per docs/07-ui.md#72. The
+ * centre column is `minmax(0, 1fr)` rather than a bare `1fr`: a grid track
+ * with content wider than its share otherwise refuses to shrink below that
+ * content's intrinsic width (the same "min-width: auto" behaviour flex items
+ * have), which would push the log off-screen instead of giving the board
+ * its intended flexible width. `Board`'s fit-on-mount measures the
+ * viewport's `clientWidth` (see board.css's fixed-height `.viewport`), and a
+ * track that never resolves to a real width is exactly the zero-size bug #15
+ * already hit once — this rule is what keeps that fixed.
+ */
 .game__body {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 240px minmax(0, 1fr) 300px;
   gap: 16px;
   align-items: start;
 }
@@ -426,8 +437,8 @@ h2 {
   border-radius: 8px;
   padding: 16px;
 }
-.panel--wide {
-  grid-column: 1 / -1;
+.game__log .log {
+  max-height: 640px;
 }
 
 .actions {

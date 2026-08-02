@@ -1,27 +1,41 @@
 /**
  * Dev-only board preview (docs/07-ui.md#73-board-rendering).
  *
- * The movement graph does not exist yet (M2 prerequisite work only), so there
- * is no real game to render the board against. This screen fabricates a
- * BoardState by hand — the fixture's five starting tiles plus enough extra
- * placements to touch all three floors, both a rotated tile and an open
- * doorway, and all three card symbols — so tile size, floor tints, rotation,
- * and door notches can be judged before anything else is built.
+ * The movement graph now exists (`getReachable`, wired in Game.tsx), so this
+ * screen is no longer standing in for one. It stays because it renders with
+ * no server and no engine at all — a plain BoardState built by hand — which
+ * is worth having for pure rendering work: tile size, floor tints, rotation,
+ * and door notches can be judged without creating a room. The fixture's five
+ * starting tiles plus enough extra placements touch all three floors, both a
+ * rotated tile and an open doorway, and all three card symbols.
  *
  * `buildPreviewBoard` is exported separately from the component so
  * layout.test.ts can assert its doors actually meet their neighbours
  * (see "the BoardPreview board" in that file) without importing React.
  */
 
-import { useState } from 'react';
-import type { BoardState, Colour, Floor, PlacedTile, Rotation } from '@bahoth/shared';
-import { cellKey } from '@bahoth/shared';
+import { useMemo, useState } from 'react';
+import type {
+  BoardState,
+  Colour,
+  Floor,
+  PlacedId,
+  PlacedTile,
+  Rotation,
+} from '@bahoth/shared';
+import { FLOORS, cellKey, placedIdFor } from '@bahoth/shared';
 import type { Content } from '@bahoth/content';
 import { fixtureContent } from '@bahoth/content';
 import { Board } from '../board/Board.js';
+import type { Pawn } from '../board/Board.js';
 import { FloorTabs } from '../board/FloorTabs.js';
 
-/** A hand-placed tile. `id` doubles as the PlacedId — one instance per tile in this preview. */
+/**
+ * A hand-placed tile. Its PlacedId is minted the same way the engine mints
+ * one — `placedIdFor(floor, x, y)` — rather than the tile id standing in for
+ * it. Invariant 3b (packages/engine/src/invariants.ts) requires exactly that
+ * agreement, and nothing here reaches the engine to catch a drift by itself.
+ */
 interface Placement {
   tileId: string;
   floor: Floor;
@@ -84,9 +98,7 @@ export function buildPreviewBoard(content: Content): BoardState {
   const placed: Record<string, PlacedTile> = {};
   const index: BoardState['index'] = { basement: {}, ground: {}, upper: {} };
   for (const p of placements) {
-    // One copy of each tile in this preview, so the tile id doubles as a
-    // stable PlacedId — there is no engine here to mint instance ids.
-    const id = p.tileId;
+    const id = placedIdFor(p.floor, p.x, p.y);
     placed[id] = {
       id,
       tileId: p.tileId,
@@ -102,40 +114,69 @@ export function buildPreviewBoard(content: Content): BoardState {
   return { placed, index };
 }
 
-/** A few pawns scattered around the preview so fan-out and colour pairing are visible. */
+/**
+ * A few pawns scattered around the preview so fan-out and colour pairing are
+ * visible. Keyed by tileId, not by the derived PlacedId string — resolved
+ * against the actual placements below, so a coordinate change in
+ * EXTRA_PLACEMENTS cannot silently orphan a pawn onto an id nobody placed.
+ */
 const PREVIEW_PAWNS: ReadonlyArray<{
-  placedId: string;
+  tileId: string;
   colour: Colour;
   initial: string;
   isMe: boolean;
 }> = [
-  { placedId: 'tile.entrance_hall', colour: 'red', initial: 'O', isMe: true },
-  { placedId: 'tile.entrance_hall', colour: 'blue', initial: 'V', isMe: false },
-  { placedId: 'tile.foyer', colour: 'yellow', initial: 'M', isMe: false },
+  { tileId: 'tile.entrance_hall', colour: 'red', initial: 'O', isMe: true },
+  { tileId: 'tile.entrance_hall', colour: 'blue', initial: 'V', isMe: false },
+  { tileId: 'tile.foyer', colour: 'yellow', initial: 'M', isMe: false },
 ];
 
-/** Reachable is a prop once getReachable exists (docs/07-ui.md#73); hardcoded here in the meantime. */
+/**
+ * Stand-in for `getReachable` — this screen has no engine to ask. Keyed by
+ * tileId for the same reason as PREVIEW_PAWNS above; resolved to real
+ * PlacedIds against the board this preview actually built.
+ */
 const PREVIEW_REACHABLE: Record<Floor, readonly string[]> = {
   ground: ['tile.foyer', 'tile.mud_room'],
   basement: ['tile.root_cellar'],
   upper: ['tile.linen_press'],
 };
 
+/** The placement for a given tile id, or undefined if this preview never placed one. */
+function placementFor(board: BoardState, tileId: string): PlacedTile | undefined {
+  return Object.values(board.placed).find((p) => p.tileId === tileId);
+}
+
 export function BoardPreview() {
   const content = fixtureContent();
   const [board] = useState(() => buildPreviewBoard(content));
   const [floor, setFloor] = useState<Floor>('ground');
 
-  type PreviewPawn = (typeof PREVIEW_PAWNS)[number];
-  const pawnsByFloor: Record<Floor, PreviewPawn[]> = {
-    basement: [],
-    ground: [],
-    upper: [],
-  };
-  for (const pawn of PREVIEW_PAWNS) {
-    const placement = board.placed[pawn.placedId];
-    if (placement) pawnsByFloor[placement.floor].push(pawn);
-  }
+  const pawnsByFloor = useMemo(() => {
+    const byFloor: Record<Floor, Pawn[]> = { basement: [], ground: [], upper: [] };
+    for (const pawn of PREVIEW_PAWNS) {
+      const placement = placementFor(board, pawn.tileId);
+      if (!placement) continue;
+      byFloor[placement.floor].push({
+        placedId: placement.id,
+        colour: pawn.colour,
+        initial: pawn.initial,
+        isMe: pawn.isMe,
+      });
+    }
+    return byFloor;
+  }, [board]);
+
+  const reachableByFloor = useMemo(() => {
+    const byFloor: Record<Floor, PlacedId[]> = { basement: [], ground: [], upper: [] };
+    for (const f of FLOORS) {
+      for (const tileId of PREVIEW_REACHABLE[f]) {
+        const placement = placementFor(board, tileId);
+        if (placement) byFloor[f].push(placement.id);
+      }
+    }
+    return byFloor;
+  }, [board]);
 
   return (
     <main className="screen">
@@ -149,7 +190,7 @@ export function BoardPreview() {
         content={content}
         floor={floor}
         pawns={pawnsByFloor[floor]}
-        reachable={PREVIEW_REACHABLE[floor]}
+        reachable={reachableByFloor[floor]}
         onMoveTo={(placedId) => console.log('MOVE ->', placedId)}
         onMoveThrough={(placedId, dir) => console.log('MOVE_THROUGH ->', placedId, dir)}
       />

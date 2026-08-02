@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { OPPOSITE, cellKey, neighbourCell } from '@bahoth/shared';
 import type { BoardState, Dir, Floor, PlacedTile, Rotation } from '@bahoth/shared';
 import { fixtureContent } from '@bahoth/content';
+import { checkInvariants, createInitialState } from '@bahoth/engine';
 import {
   MAX_ZOOM,
   MIN_ZOOM,
@@ -241,6 +242,17 @@ describe('the BoardPreview board', () => {
         .map((v) => v.placedId);
       expect(unreached, `${floor} tiles unreachable from its landing`).toEqual([]);
     }
+  });
+
+  it('satisfies the engine invariants — a board it would accept, not just a comment claiming one', () => {
+    // invariants.ts check 3b requires placed[key].id === placedIdFor(floor,
+    // x, y); BoardPreview used to mint bare tile ids instead, which nothing
+    // in this file's other tests would ever catch because they never ask the
+    // engine. The cheapest honest version: build a real initial state and
+    // attach this board to it, then let checkInvariants judge it.
+    const state = createInitialState({ seed: 1, content });
+    const withBoard = { ...state, board: buildPreviewBoard(content) };
+    expect(checkInvariants(withBoard)).toEqual([]);
   });
 
   it('touches all three floors, both a rotated tile and an open doorway', () => {

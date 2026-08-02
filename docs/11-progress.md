@@ -10,7 +10,7 @@ Living status document. Updated when a milestone moves, not on a schedule.
 | -------------------------------- | -------------- | ------------------------------------------------------------- |
 | M0 — Skeleton and the spine      | ✅ Complete    | Merged — [PR #2](https://github.com/thai-nm/bahoth2nd/pull/2) |
 | M1 — Seats, identity, redaction  | ✅ Complete    | All nine items; D1–D5 closed                                  |
-| M2 — The house                   | 🟨 In progress | Tiles, renderer, and movement done; discovery to come         |
+| M2 — The house                   | 🟨 In progress | Tiles, renderer, movement, and wiring done; discovery to come |
 | M3 — Cards, traits, dice         | ⬜ Not started |                                                               |
 | M4 — The haunt, and five of them | ⬜ Not started |                                                               |
 | M5 — Polish                      | ⬜ Not started |                                                               |
@@ -24,15 +24,16 @@ Planned as four PRs — content, movement, discovery, renderer — and running a
 five, because the renderer turned out not to need the movement graph and went
 early (deviation 8).
 
-| Item                                                    | Status                                                             |
-| ------------------------------------------------------- | ------------------------------------------------------------------ |
-| Tiles, static links, and the starting layout as content | ✅ Done — [#13](https://github.com/thai-nm/bahoth2nd/pull/13)      |
-| Rotation and grid primitives in `shared`                | ✅ Done — [#14](https://github.com/thai-nm/bahoth2nd/pull/14)      |
-| Board renderer: tiles, doors, pan/zoom, floor tabs      | ✅ Done — [#15](https://github.com/thai-nm/bahoth2nd/pull/15)      |
-| `movement.ts`: adjacency, rotation, links, no-backtrack | 🟨 In review — [#16](https://github.com/thai-nm/bahoth2nd/pull/16) |
-| Discovery: tile draw, rotation prompt, placement        | ⬜ Not started                                                     |
-| `PendingPrompt` lifecycle and timeout defaults          | ⬜ Not started                                                     |
-| Event log panel driven by `GameEvent`s                  | ⬜ Not started                                                     |
+| Item                                                    | Status                                                        |
+| ------------------------------------------------------- | ------------------------------------------------------------- |
+| Tiles, static links, and the starting layout as content | ✅ Done — [#13](https://github.com/thai-nm/bahoth2nd/pull/13) |
+| Rotation and grid primitives in `shared`                | ✅ Done — [#14](https://github.com/thai-nm/bahoth2nd/pull/14) |
+| Board renderer: tiles, doors, pan/zoom, floor tabs      | ✅ Done — [#15](https://github.com/thai-nm/bahoth2nd/pull/15) |
+| `movement.ts`: adjacency, rotation, links, no-backtrack | ✅ Done — [#16](https://github.com/thai-nm/bahoth2nd/pull/16) |
+| Wire the board into the game screen                     | ✅ Done — this PR                                             |
+| Discovery: tile draw, rotation prompt, placement        | ⬜ Not started                                                |
+| `PendingPrompt` lifecycle and timeout defaults          | ⬜ Not started                                                |
+| Event log panel driven by `GameEvent`s                  | ⬜ Not started                                                |
 
 The content item shipped 49 tiles (44 drawable plus the three starting rooms
 and two landings), the `to_tile` / `to_floor` / `oneway_drop` link vocabulary,
@@ -136,6 +137,69 @@ path `findPath` returns for a room `getReachable` promised must be a real
 sequence of connections, must not begin by backtracking, and must fit the
 budget. D7 was one instance of that property failing, and one instance is not
 what you want to be asserting.
+
+### Wiring the board into the game screen
+
+The joint the last two items existed to make: `Game.tsx` now calls
+`getReachable(state, seatId, content)` and hands the result to `Board` as
+the `reachable` prop it has taken since #15, instead of a debug JSON panel.
+This is the first time the highlight the renderer draws and the engine's own
+legality answer meet each other, rather than one standing in for the other.
+
+Two decisions worth recording:
+
+- **Doorway arrows stay dead.** `MOVE_THROUGH` is still `UNKNOWN_ACTION` in
+  the engine — discovery has not landed — so `Game.tsx` does not pass
+  `onMoveThrough`. `Board` already dims and disables an arrow when that
+  handler is `undefined`; wiring one through anyway would put an error banner
+  behind every doorway click for a feature that doesn't exist yet.
+- **`getReachable` is filtered to the displayed floor before it reaches
+  `Board`.** The engine's answer spans floors — a staircase link crosses
+  one — but `Board` only ever renders one floor at a time. Passing the
+  unfiltered list through would silently drop the entries for rooms on the
+  other floor, which reads as the engine being wrong when it is the caller
+  that forgot to filter.
+
+`BoardPreview` came along for the cleanup it predicted (see "Next actions" in
+the previous update): invariant 3b now requires `placed[key].id ===
+placedIdFor(floor, x, y)`, and the preview used to mint bare tile ids
+instead. It now calls `placedIdFor` like the engine does, and its pawns and
+hardcoded reachable list resolve their `PlacedId`s by looking placements up
+by tile id rather than hardcoding the derived string — a coordinate change
+in the preview's layout can no longer silently orphan a pawn onto an id
+nobody placed. `layout.test.ts` turns "the preview is a board the engine
+would accept" from a comment into an assertion: it attaches
+`buildPreviewBoard` to a real `createInitialState` and asserts
+`checkInvariants` reports nothing. Watched failing first, by reverting the
+id back to the bare tile id — it failed with exactly invariant 3b's
+complaint, one line per tile.
+
+The players rail and the event log are untouched — both are their own M2
+items, and the rail still shows the plain seat list rather than
+`docs/07-ui.md#72`'s portraits and trait strips, since traits have no death
+detection until M3. `store.ts`'s `describe()` picks up `moved` and
+`discovered` so the log narrates something better than the bare event name
+the first time either fires; nothing else about the log panel changed.
+
+**One bug the green build did not catch**, continuing #15's record. Pawns
+take their letter from the explorer's name, and every placeholder explorer is
+named "The something" — so the first real game drew three pawns all reading
+**"T"**, separable only by colour, which is the one job the letter was there
+to do. Nothing in the suite could see it: every assertion was about _which_
+pawn sat _where_, and all three were individually correct. A leading article
+is now stripped before the initial is taken, which is the right rule for real
+content too ("Ox Bellows" is unaffected), and the test asserts the thing that
+actually broke — that the three explorers a 3-player game seats get three
+_distinct_ letters, not that any one of them is right.
+
+Verified by driving a real game in a browser: three seats (one browser, two
+scripted websocket clients, because seat tokens are keyed by room code in
+`localStorage` and two tabs would share one seat), start, a one-room move, a
+two-room path, a cross-floor move through the staircase link, and a
+four-room path from the upper landing down to the basement — which is
+`getReachable` spanning three floors and the per-floor filter both doing
+their jobs at once. The no-backtrack rule is visible on screen: the room you
+just left stops being highlighted.
 
 ---
 
@@ -451,23 +515,15 @@ Not bugs — real properties of the design that were not obvious when planning.
 
 In order:
 
-1. **Wire the board into the game screen.** `getReachable` now exists, so the
-   `reachable` prop the renderer already takes has something to be passed —
-   replace the debug JSON panel in `Game.tsx`, and retire the `#board-preview`
-   route or keep it behind the dev flag for rendering work that needs no
-   server. This is the first time the highlight and the engine's legality
-   answer meet, which is the point of having shared them. Note that
-   `BoardPreview` mints its own `PlacedId`s as bare tile ids, which invariant
-   3b now rejects — its pawns and its hardcoded reachable list key off them
-   too, so switching it to `placedIdFor` is that PR's job, not a one-line
-   change. Nothing is broken today: no preview board reaches the engine.
-2. **Discovery**: tile draw, the rotation prompt, and placement — the next
-   engine PR on top of `movement.ts`.
-3. **`PendingPrompt` lifecycle and timeout defaults.**
-4. **Confirm the turn-timer defaults with a real playtest** (roadmap open
+1. **Discovery**: tile draw, the rotation prompt, and placement — the next
+   engine PR on top of `movement.ts`. Once it lands, doorway arrows in
+   `Board` stop being dead: `Game.tsx` will pass `onMoveThrough`, which it
+   deliberately does not yet.
+2. **`PendingPrompt` lifecycle and timeout defaults.**
+3. **Confirm the turn-timer defaults with a real playtest** (roadmap open
    question 2). Ten minutes and ninety seconds are still guesses; they are now
    at least guesses that something reads.
-5. **Answer roadmap open question 3** — whether any redistributable room set
+4. **Answer roadmap open question 3** — whether any redistributable room set
    exists — before hand-entering 44 tiles and ~65 cards from a physical copy.
    Ten minutes of looking against hours of transcription.
 
@@ -477,7 +533,7 @@ Rough, for trend only.
 
 |                     | M0                    | M1                    | M2 (so far)           |
 | ------------------- | --------------------- | --------------------- | --------------------- |
-| Tests               | 49                    | 88                    | 169                   |
+| Tests               | 49                    | 88                    | 180                   |
 | Packages            | 5                     | 5                     | 5                     |
 | Haunts implemented  | 0 / 50                | 0 / 50                | 0 / 50                |
 | Room tiles authored | 0 / 44                | 0 / 44                | 44 / 44 (placeholder) |
