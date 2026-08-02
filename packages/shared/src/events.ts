@@ -46,3 +46,46 @@ export type GameEvent =
   | { t: 'log'; text: string };
 
 export type EventType = GameEvent['t'];
+
+/**
+ * Every event type, at runtime.
+ *
+ * The union above is type-only, so nothing can iterate it — and "the log
+ * narrates every event" is precisely the kind of claim a test must be able to
+ * iterate rather than take on trust. The two assertions below make this list
+ * and the union check each other in **both** directions at compile time: a
+ * variant added to the union and not to the list fails the first, and a typo
+ * in the list fails the second. A one-directional check would let the list
+ * quietly fall behind, which is the failure the list exists to prevent.
+ */
+export const EVENT_TYPES = [
+  'joined',
+  'char_chosen',
+  'game_started',
+  'turn_started',
+  'turn_ended',
+  'moved',
+  'discovered',
+  'drew_card',
+  'rolled',
+  'trait_changed',
+  'haunt_roll',
+  'haunt_begun',
+  'attacked',
+  'died',
+  'connection_changed',
+  'game_over',
+  'log',
+] as const;
+
+/** Errors with the offending member's name when `T` is not `never`. */
+type AssertNever<T extends never> = T;
+
+// Every union member appears in the list…
+export type _AllEventTypesListed = AssertNever<
+  Exclude<EventType, (typeof EVENT_TYPES)[number]>
+>;
+// …and every list entry is a real union member (catches a typo in the list,
+// which would otherwise satisfy the check above while narrating nothing).
+const _eventTypesAreReal: readonly EventType[] = EVENT_TYPES;
+void _eventTypesAreReal;

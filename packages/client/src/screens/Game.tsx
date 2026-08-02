@@ -17,6 +17,7 @@ import type { Floor, RotateTilePayload, Rotation } from '@bahoth/shared';
 import { Board } from '../board/Board.js';
 import { FloorTabs } from '../board/FloorTabs.js';
 import { floorOf, pawnsFromState } from '../board/pawns.js';
+import { LogPanel } from '../log/LogPanel.js';
 
 /** Seconds of countdown to show. Below this, the clock is worth watching. */
 const VISIBLE_WITHIN_MS = 60 * 1000;
@@ -65,6 +66,7 @@ export function Game() {
   const version = useStore((s) => s.version);
   const log = useStore((s) => s.log);
   const send = useStore((s) => s.send);
+  const sendChat = useStore((s) => s.sendChat);
   const pending = useStore((s) => s.pendingSeq !== null);
   // Called before the early return: hooks may not be conditional.
   const remaining = useRemaining(state?.turnDeadline ?? null);
@@ -409,14 +411,19 @@ export function Game() {
           />
         </section>
 
-        <section className="panel game__log">
-          <h2>Log</h2>
-          <ul className="log">
-            {log.slice(-40).map((l) => (
-              <li key={l.id}>{l.text}</li>
-            ))}
-          </ul>
-        </section>
+        {/* Colour comes from the seat's chosen explorer, and is null when
+            there isn't one — the same rule `pawnsFromState` applies to pawns
+            (there is no honest colour for a seat with no character), so a
+            line and a pawn can never disagree about who is blue. */}
+        <LogPanel
+          entries={log}
+          mySeat={seatId}
+          colourOf={(sid) => {
+            const charId = state.players[sid]?.charId;
+            return charId ? (content.charactersById[charId]?.colour ?? null) : null;
+          }}
+          onSend={sendChat}
+        />
       </div>
     </main>
   );

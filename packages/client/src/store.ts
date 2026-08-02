@@ -10,7 +10,6 @@
 import { create } from 'zustand';
 import type {
   GameAction,
-  GameEvent,
   GameState,
   PublicSeat,
   RoomCode,
@@ -20,13 +19,13 @@ import type {
 import type { Content } from '@bahoth/content';
 import { buildContent } from '@bahoth/content';
 import { Connection, saveToken, tokenFor } from './net.js';
+import type { LogEntry } from './log/narrate.js';
+import { contextFrom, entryFor } from './log/narrate.js';
 
 export type Screen = 'home' | 'lobby' | 'game';
 
-interface LogLine {
-  id: number;
-  text: string;
-}
+/** How many lines to retain. Beyond this the oldest are dropped. */
+const LOG_LIMIT = 200;
 
 interface Store {
   screen: Screen;
@@ -42,7 +41,7 @@ interface Store {
 
   state: GameState | null;
   version: number;
-  log: LogLine[];
+  log: LogEntry[];
   error: string | null;
   pendingSeq: number | null;
   /** Seat token from `welcome`, held until `room` reveals the code. */
@@ -55,6 +54,7 @@ interface Store {
   createRoom: () => void;
   joinRoom: (code: RoomCode) => void;
   send: (action: GameAction) => void;
+  sendChat: (text: string) => void;
   dismissError: () => void;
 }
 
@@ -133,6 +133,15 @@ export const useStore = create<Store>((set, get) => ({
     set({ pendingSeq: seq });
   },
 
+  sendChat(text) {
+    // Not echoed locally: chat is broadcast back to the sender too
+    // (`broadcast`, not `broadcastExcept`, in packages/server/src/gateway.ts),
+    // so echoing here would print every message twice. The round trip also
+    // means the sender sees their line in the same order everyone else does.
+    const trimmed = text.trim();
+    if (trimmed) get().conn?.chat(trimmed);
+  },
+
   dismissError() {
     set({ error: null });
   },
@@ -181,9 +190,17 @@ function handle(msg: ServerMessage, set: Set, get: Get): void {
     }
 
     case 'events': {
-      const { content } = get();
+      // Narrated against the state that arrived immediately before these
+      // events (the server sends `snapshot` then `events` for one version —
+      // `broadcastState` in packages/server/src/gateway.ts), which is what
+      // lets a `moved` event name the room it moved into.
+      const { state, seats, content } = get();
+      const ctx = contextFrom(state, seats, content);
+      const at = Date.now();
       set((s) => ({
-        log: [...s.log, ...msg.events.map((e) => toLogLine(e, content))].slice(-200),
+        log: [...s.log, ...msg.events.map((e) => entryFor(e, ctx, logId++, at))].slice(
+          -LOG_LIMIT,
+        ),
       }));
       break;
     }
@@ -197,16 +214,33 @@ function handle(msg: ServerMessage, set: Set, get: Get): void {
       break;
 
     case 'chat':
+      // Carries the server's timestamp rather than arrival time, so a message
+      // held up in flight still sorts and reads by when it was said.
       set((s) => ({
         log: [
           ...s.log,
-          { id: logId++, text: `${seatName(get(), msg.seatId)}: ${msg.text}` },
-        ],
+          {
+            id: logId++,
+            kind: 'chat' as const,
+            seat: msg.seatId,
+            text: `${seatName(get(), msg.seatId)}: ${msg.text}`,
+            at: msg.at,
+          },
+        ].slice(-LOG_LIMIT),
       }));
       break;
 
     case 'left':
-      set({ screen: 'home', roomCode: null, state: null, seats: [], version: -1 });
+      // The log goes with the room. Carrying it to the next one would narrate
+      // a game the player is no longer in, above the one they just joined.
+      set({
+        screen: 'home',
+        roomCode: null,
+        state: null,
+        seats: [],
+        version: -1,
+        log: [],
+      });
       break;
 
     case 'pong':
@@ -214,50 +248,16 @@ function handle(msg: ServerMessage, set: Set, get: Get): void {
   }
 }
 
+/**
+ * A seat's display name. `state.players` first and the lobby seat list
+ * second, for the same reason `contextFrom` (log/narrate.ts) does it that
+ * way: the state is the authority once a game is running, but chat happens
+ * in the lobby too, before `state.players` exists at all.
+ */
 function seatName(store: Store, seatId: SeatId): string {
-  return store.seats.find((s) => s.seatId === seatId)?.name ?? seatId;
-}
-
-/** Turn an event into a log line. The real narration layer arrives with M2. */
-function toLogLine(e: GameEvent, content: Content | null): LogLine {
-  return { id: logId++, text: describe(e, content) };
-}
-
-function describe(e: GameEvent, content: Content | null): string {
-  switch (e.t) {
-    case 'joined':
-      return `${e.name} joined`;
-    case 'char_chosen':
-      return e.charId ? `${e.seat} chose ${e.charId}` : `${e.seat} cleared their choice`;
-    case 'game_started':
-      return `The game begins. Turn order: ${e.turnOrder.join(' → ')}`;
-    case 'turn_started':
-      return `Round ${e.round}: ${e.seat}'s turn`;
-    case 'turn_ended':
-      return `${e.seat} ended their turn`;
-    case 'connection_changed':
-      return `${e.seat} ${e.connected ? 'reconnected' : 'disconnected'}`;
-    case 'rolled':
-      return `${e.seat} rolled ${e.total} (${e.dice.join(', ')}) for ${e.reason}`;
-    // Wiring the board (this PR) makes `moved` and `discovered` events real
-    // for the first time; without a case they fell through to the bare event
-    // name below, which is exactly what a "debug JSON panel" narration looks
-    // like. `describe` has no store access (see toLogLine), so seat ids stay
-    // ids here rather than names — resolving them to `seatName` like the
-    // `chat` case above is the event log panel's own M2 item, not this one's.
-    case 'moved':
-      return `${e.seat} moved to ${e.to}`;
-    case 'discovered':
-      // The player-facing log should read like a room, not a content id —
-      // resolve the name from content (the store always has it once a game
-      // is running). Seat ids stay ids: naming seats is the event-log
-      // panel's own item, not this one's (see the `moved` case above).
-      return `${e.seat} discovered ${content?.tilesById[e.placed.tileId]?.name ?? e.placed.tileId}`;
-    case 'game_over':
-      return `Game over: ${e.result.reason}`;
-    case 'log':
-      return e.text;
-    default:
-      return e.t;
-  }
+  return (
+    store.state?.players[seatId]?.name ??
+    store.seats.find((s) => s.seatId === seatId)?.name ??
+    seatId
+  );
 }

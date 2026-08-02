@@ -2,29 +2,36 @@
 
 Living status document. Updated when a milestone moves, not on a schedule.
 
-**Last updated: 2026-08-02** · **Current milestone: M2 (in progress)**
+**Last updated: 2026-08-02** · **Current milestone: M2 (complete) → M3 next**
 
 ## Status at a glance
 
-| Milestone                        | Status         | Notes                                                         |
-| -------------------------------- | -------------- | ------------------------------------------------------------- |
-| M0 — Skeleton and the spine      | ✅ Complete    | Merged — [PR #2](https://github.com/thai-nm/bahoth2nd/pull/2) |
-| M1 — Seats, identity, redaction  | ✅ Complete    | All nine items; D1–D5 closed                                  |
-| M2 — The house                   | 🟨 In progress | Explorable end to end, prompts general; the event log is left |
-| M3 — Cards, traits, dice         | ⬜ Not started |                                                               |
-| M4 — The haunt, and five of them | ⬜ Not started |                                                               |
-| M5 — Polish                      | ⬜ Not started |                                                               |
-| M6 — The remaining 45 haunts     | ⬜ Not started |                                                               |
+| Milestone                        | Status         | Notes                                                            |
+| -------------------------------- | -------------- | ---------------------------------------------------------------- |
+| M0 — Skeleton and the spine      | ✅ Complete    | Merged — [PR #2](https://github.com/thai-nm/bahoth2nd/pull/2)    |
+| M1 — Seats, identity, redaction  | ✅ Complete    | All nine items; D1–D5 closed                                     |
+| M2 — The house                   | ✅ Complete    | All six roadmap items, shipped as eight PRs; D7 found and closed |
+| M3 — Cards, traits, dice         | ⬜ Not started |                                                                  |
+| M4 — The haunt, and five of them | ⬜ Not started |                                                                  |
+| M5 — Polish                      | ⬜ Not started |                                                                  |
+| M6 — The remaining 45 haunts     | ⬜ Not started |                                                                  |
 
 ---
 
-## M2 — in progress
+## M2 — complete
 
-Planned as four PRs — content, movement, discovery, renderer — and running as
-seven, because the renderer turned out not to need the movement graph and went
+Planned as four PRs — content, movement, discovery, renderer — and shipped as
+eight, because the renderer turned out not to need the movement graph and went
 early (deviation 8), wiring it to the engine was worth its own diff, and
 discovery shipped the prompt mechanism a milestone-item ahead of the generic
 lifecycle that now sits under it.
+
+**Exit criteria met.** 3–6 players explore the whole house across all three
+floors; every staircase and the one-way drop are reachable and were walked in
+a browser; the movement graph cannot disagree between client and server
+because both call one `getReachable` (docs/05-engine.md#57), asserted on a
+redacted snapshot as well as on the server's own state; and the property test
+runs 500 random legal actions × 25 seeds without breaking an invariant.
 
 | Item                                                    | Status                                                        |
 | ------------------------------------------------------- | ------------------------------------------------------------- |
@@ -34,8 +41,8 @@ lifecycle that now sits under it.
 | `movement.ts`: adjacency, rotation, links, no-backtrack | ✅ Done — [#16](https://github.com/thai-nm/bahoth2nd/pull/16) |
 | Wire the board into the game screen                     | ✅ Done — [#17](https://github.com/thai-nm/bahoth2nd/pull/17) |
 | Discovery: tile draw, rotation prompt, placement        | ✅ Done — [#18](https://github.com/thai-nm/bahoth2nd/pull/18) |
-| `PendingPrompt` lifecycle and timeout defaults          | ✅ Done — this PR                                             |
-| Event log panel driven by `GameEvent`s                  | ⬜ Not started                                                |
+| `PendingPrompt` lifecycle and timeout defaults          | ✅ Done — [#19](https://github.com/thai-nm/bahoth2nd/pull/19) |
+| Event log panel driven by `GameEvent`s                  | ✅ Done — this PR                                             |
 
 The content item shipped 49 tiles (44 drawable plus the three starting rooms
 and two landings), the `to_tile` / `to_floor` / `oneway_drop` link vocabulary,
@@ -401,6 +408,97 @@ the behaviour the whole item buys. Answering normally still works. The
 synthetic-click quirk from #18 recurred and was again worked around with
 dispatched `MouseEvent`s.
 
+### The event log
+
+The last M2 item, and the one that makes the previous seven legible: until
+now the reducer's narration reached the screen as `seat_0 moved to
+ground:0,1`. Every one of the seventeen `GameEvent` kinds now has prose, seat
+ids and content ids resolve to names, and chat shares the scroller — one
+conversation, since "Ana moved to the Ballroom" and "wait, don't" are a
+single thread and splitting them into two columns would be inventing a
+problem.
+
+The narration moved out of `store.ts` into `packages/client/src/log/`, split
+so that the part worth testing is testable: `narrate.ts` is pure — event plus
+a snapshot-derived context in, one line out — and `LogPanel.tsx` holds only
+the DOM wiring vitest's `node` environment cannot reach (D6). A component
+that decided its own wording would be a component whose wording is untested.
+
+Five decisions worth recording:
+
+- **Narration never prints a drawn card id.** `drew_card` reads "Ana drew an
+  Omen card". Events are broadcast to every seat unredacted, so an id in the
+  narration would leak through the log exactly what `redactFor` exists to
+  protect — and the log is the one surface where it would be leaked to
+  everyone at once, permanently, in writing. No card exists yet; the rule is
+  in place before the first one does, because the alternative is discovering
+  it in M3 with a card on the table.
+- **Trait changes read as printed values, not track indices.** "Might 4" is a
+  slot number. The context carries each seat's `charId` so index 3 resolves
+  through `character.tracks`, and index 0 says "the skull" rather than a
+  value — the slot that has none. Falls back to the index where the explorer
+  is unknown, which is honest rather than wrong.
+- **The context is built from the snapshot that arrived _with_ the events.**
+  The server sends `snapshot` then `events` for one version, so the board
+  already holds the room a `moved` event names. That ordering is what makes
+  `PlacedId → room name` possible at all; it would be the wrong way round for
+  an event describing something the same reduction removed, which is noted in
+  the code as the thing to watch for.
+- **A line is attributed to a seat separately from its text.** `game_started`
+  is not Ana's line because she is first in the turn order, so it gets no
+  colour swatch; `haunt_begun` belongs to the traitor. Colour is never the
+  only cue — the name is inside the text (docs/07-ui.md#76).
+- **The log scroller pins to the bottom, except when you have scrolled up.**
+  A log that always jumps to the newest line takes history away from whoever
+  is reading it, and a turn clock is exactly when someone is catching up.
+  Sending a message re-pins you, since otherwise you type something and never
+  see it arrive.
+
+**`EVENT_TYPES`, and a test that was proving nothing.** The first draft
+claimed a total `Record<EventType, GameEvent>` of samples made a missing
+narration a compile error, the same trick `PROMPT_HANDLERS` uses. It does
+not: `packages/client/tsconfig.json` **excludes test files**, and vitest
+transpiles without typechecking, so the annotation was decoration and the
+sweep really iterated "every event somebody remembered". `shared` now exports
+a runtime `EVENT_TYPES` list, checked against the union in both directions at
+compile time — a variant missing from the list fails one assertion, a typo in
+the list fails the other — and the test sweeps that. Both directions were
+watched failing: adding an `item_dropped` variant errored in `events.ts` and
+in `narrate.ts`'s exhaustiveness check, and misspelling a list entry errored
+too.
+
+`narrate` itself is exhaustive by a `never` assignment rather than by a
+`default` that returns the bare event name. That default is how `moved` and
+`discovered` each shipped once as debug output; a new event kind is now a
+build failure instead of a line that reads `drew_card`.
+
+**One layout bug found by looking, not by testing.** The log column capped
+its list at 640px against a board viewport fixed at 560 — already the taller
+column before this item, and the compose row made the overshoot plain: the
+whole page scrolled, pushing the top bar and its turn clock off screen. The
+cap is now 560, tied in a comment to the constant it has to match.
+
+258 tests, fourteen files. Eighteen are the narration's own; every one was
+watched failing against a deliberate mutation of the line it depends on —
+seat ids instead of names, `PlacedId`s instead of room names, track indices
+instead of printed values, the card id printed, a kind returned to the bare
+name, a table-wide event attributed to a seat, the lobby seat list winning
+over `state.players`, attack damage attributed to the wrong side, and the
+`EVENT_TYPES` sweep reduced to the samples list.
+
+**Verified by driving a real game in a browser** — three seats, one browser
+plus two scripted websocket clients. The lobby now carries the panel too,
+which is where `joined` and `char_chosen` are narrated and where waiting for
+a table to fill makes chat worth having; both read correctly, with the right
+colour swatch per seat. Then in the game: a move ("Ana moved to the Foyer"), a
+discovery ("Ana discovered the Echo Chamber"), `game_started` with the turn
+order in names and no swatch, and — by killing both bots — "Cal disconnected"
+/ "Ben disconnected" arriving while the view was deliberately scrolled up,
+which stayed put rather than jumping. A message sent from that scrolled
+position jumped back to the bottom. Chat appears exactly once for its sender,
+confirming the no-local-echo decision. The synthetic-click quirk from #18 and
+#19 recurred and was again worked around with dispatched `MouseEvent`s.
+
 ---
 
 ## M1 — complete
@@ -690,6 +788,9 @@ rather than drift.
 | 17  | Deck **drawability** is derived from content + board, never read off `state.tileDeck` | The deck's order is redacted; its composition is not, and cannot be — content and the board are both public. Deriving it is what lets one legality function answer identically on the server and on a client that holds only a redacted snapshot.                                                    |
 | 18  | `pending.deadline` is armed by `TICK`, not "set by the server" as 04-data-model says  | The reducer is the only mutator, and the engine may not read a clock. A deadline written outside the action log would not survive replay. `now` still comes from the server — in the action — which is the part of the doc that matters. Same mechanism as `turnDeadline`.                           |
 | 19  | A prompt gets its **own** budget (`timers.promptMs`), not a slice of the turn's       | A turn is spent by the seat taking it; a prompt blocks every seat at the table. Sharing the turn's clock meant one undecided rotation cost a whole ten-minute turn. 60 s is a guess, like the other two, and joins open question 2's playtest list.                                                  |
+| 20  | The log panel renders in the **lobby** as well as the game, which 07-ui does not show | `joined` and `char_chosen` are narrated only in the lobby, so without it they scrolled past into a log nobody would see until the game began — and waiting for a table to fill is when chat is most wanted. One component, two callers; only the height cap differs.                                 |
+| 21  | Event narration and chat share **one** scroller rather than two regions               | 07-ui says "interleaved with chat", and they are one conversation: "Ana moved to the Ballroom" and "wait, don't" belong next to each other. They stay distinguishable by weight and colour, never by colour alone — a chat line carries its speaker's name in the text.                              |
+| 22  | `drew_card` narration omits the card id entirely                                      | Events are broadcast unredacted to every seat, so an id in the log leaks to everyone at once and in writing. Narration does not need it: the reveal is its own UI in M3. The rule is set before the first card exists, rather than after.                                                            |
 
 ---
 
@@ -721,27 +822,36 @@ Not bugs — real properties of the design that were not obvious when planning.
 
 In order:
 
-1. **Event log panel driven by `GameEvent`s** — the last M2 item. `describe()`
-   still prints seat ids rather than names, which is that item's job.
-2. **Decide what a prompt payload reveals, in M3.** `redactFor` passes
+1. **Answer roadmap open question 3** — whether any redistributable room set
+   exists — before hand-entering 44 tiles and ~65 cards from a physical copy.
+   Ten minutes of looking against hours of transcription, and M3 is the
+   milestone that needs the cards.
+2. **Start M3 with the `Effect` interpreter**, not with content. It is the
+   piece the haunt system is built on, the prompt lifecycle it suspends
+   through now exists, and the roadmap's own risk table says not to rush it.
+3. **Decide what a prompt payload reveals, in M3.** `redactFor` passes
    `pending` through whole. Correct for `rotate_tile`, whose payload is drawn
    on everyone's board anyway; wrong the moment `choose_card` puts card
    identities in a payload. The rule belongs with the first kind that needs
    it, not before.
-3. **Confirm the turn-timer defaults with a real playtest** (roadmap open
+4. **Decide whether `GameEvent`s need redacting too**, with the same card.
+   `broadcastState` sends one event array to every seat, and the log now
+   narrates from it. Narration already refuses to print a card id
+   (deviation 22), but that is a convention in one function rather than a
+   guarantee in the transport — the moment an event carries something only
+   one seat should know, the fix belongs beside `redactFor`, not in the
+   wording.
+5. **Confirm the turn-timer defaults with a real playtest** (roadmap open
    question 2). Ten minutes, ninety seconds, and now sixty seconds for a
    prompt are still guesses; they are at least guesses that something reads.
-4. **Answer roadmap open question 3** — whether any redistributable room set
-   exists — before hand-entering 44 tiles and ~65 cards from a physical copy.
-   Ten minutes of looking against hours of transcription.
 
 ## Metrics
 
 Rough, for trend only.
 
-|                     | M0                    | M1                    | M2 (so far)           |
+|                     | M0                    | M1                    | M2                    |
 | ------------------- | --------------------- | --------------------- | --------------------- |
-| Tests               | 49                    | 88                    | 240                   |
+| Tests               | 49                    | 88                    | 258                   |
 | Packages            | 5                     | 5                     | 5                     |
 | Haunts implemented  | 0 / 50                | 0 / 50                | 0 / 50                |
 | Room tiles authored | 0 / 44                | 0 / 44                | 44 / 44 (placeholder) |

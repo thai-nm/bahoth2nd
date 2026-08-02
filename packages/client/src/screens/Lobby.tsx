@@ -1,6 +1,7 @@
 import { useStore } from '../store.js';
 import { getHostSeat, getLegalActions } from '@bahoth/engine';
 import type { GameAction } from '@bahoth/shared';
+import { LogPanel } from '../log/LogPanel.js';
 
 export function Lobby() {
   const state = useStore((s) => s.state);
@@ -8,6 +9,8 @@ export function Lobby() {
   const seatId = useStore((s) => s.seatId);
   const roomCode = useStore((s) => s.roomCode);
   const send = useStore((s) => s.send);
+  const sendChat = useStore((s) => s.sendChat);
+  const log = useStore((s) => s.log);
   const pending = useStore((s) => s.pendingSeq !== null);
 
   if (!state || !content || !seatId) return <div className="boot">Joining…</div>;
@@ -149,6 +152,20 @@ export function Lobby() {
           })}
         </div>
       </section>
+
+      {/* The same panel the game screen uses. `joined` and `char_chosen` are
+          narrated here and nowhere else — without this they scrolled past
+          into a log nobody saw until the game started — and waiting for a
+          table to fill is the moment chat is most wanted. */}
+      <LogPanel
+        entries={log}
+        mySeat={seatId}
+        colourOf={(sid) => {
+          const charId = state.players[sid]?.charId;
+          return charId ? (content.charactersById[charId]?.colour ?? null) : null;
+        }}
+        onSend={sendChat}
+      />
     </main>
   );
 }
