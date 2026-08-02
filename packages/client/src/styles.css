@@ -437,8 +437,19 @@ h2 {
   border-radius: 8px;
   padding: 16px;
 }
-.game__log .log {
-  max-height: 640px;
+/* The same panel serves the lobby and the game (one component, two callers),
+   so the tall variant is scoped to the game's right-hand column rather than
+   baked into the panel — in the lobby it sits under the explorer grid and
+   has no full-height column to fill.
+   560px is `.viewport`'s fixed height in board.css, not a round number: the
+   log and the board are side-by-side columns, and the taller one decides
+   whether the whole page scrolls. The old 640 already overshot it; adding
+   the compose row underneath made the overshoot visible. */
+.game__body .log-panel .log {
+  max-height: 560px;
+}
+.screen > .log-panel {
+  margin-top: 28px;
 }
 
 .actions {
@@ -493,6 +504,13 @@ h2 {
   border-radius: 3px;
 }
 
+/*
+ * The log panel (docs/07-ui.md#72). Event narration and chat share one
+ * scroller — they are one conversation, and separating them would make
+ * "Ox moved to the Ballroom" and "wait, don't" sit in different columns.
+ * They stay distinguishable by weight and colour instead, never by colour
+ * alone: chat lines carry the speaker's name inside the text (#76).
+ */
 .log {
   list-style: none;
   margin: 0;
@@ -502,11 +520,48 @@ h2 {
   font-size: 13px;
   display: grid;
   gap: 3px;
+  /* `align-content: start` so a short log's lines stack at the top rather
+     than stretching to fill the scroller's height. */
+  align-content: start;
 }
-.log li {
+.log__line {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: baseline;
+  gap: 6px;
   color: var(--muted);
   border-bottom: 1px solid rgb(255 255 255 / 4%);
   padding-bottom: 3px;
+}
+/* Tabular numerals so the timestamp column does not shift the text beside
+   it as the digits change — the same reason the prompt clock uses them. */
+.log__time {
+  font-family: ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  opacity: 0.55;
+}
+.log__line--chat .log__text {
+  color: var(--text);
+}
+/* The local player's own lines, so you can find yourself in a busy log. */
+.log__line--mine .log__text {
+  font-weight: 600;
+}
+.log__line .swatch {
+  /* The grid's baseline alignment leaves a bare span sitting oddly; nudge
+     the swatch onto the text's optical line. */
+  align-self: center;
+}
+
+.log__compose {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+.log__input {
+  font-size: 13px;
+  padding: 6px 8px;
 }
 
 .json {
