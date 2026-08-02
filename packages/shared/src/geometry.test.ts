@@ -6,6 +6,7 @@ import {
   cellKey,
   doorDirs,
   neighbourCell,
+  placedIdFor,
   rotateDoors,
 } from './geometry.js';
 import { ROTATIONS } from './ids.js';
@@ -109,5 +110,12 @@ describe('geometry', () => {
 
   it('cellKey matches the "x,y" format BoardState.index uses', () => {
     expect(cellKey(3, -2)).toBe('3,-2');
+  });
+
+  it('placedIdFor derives an id from the cell, distinct across floors', () => {
+    expect(placedIdFor('ground', 0, 2)).toBe('ground:0,2');
+    // Same cell, different floor: distinct ids, since a floor is an
+    // independent grid (docs/02-rules-model.md#23-the-house).
+    expect(placedIdFor('basement', 0, 2)).not.toBe(placedIdFor('ground', 0, 2));
   });
 });

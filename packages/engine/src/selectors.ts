@@ -18,6 +18,7 @@ import {
   type Trait,
 } from '@bahoth/shared';
 import type { Content } from '@bahoth/content';
+import { getReachable } from './movement.js';
 
 /**
  * Seat ids are `seat_<n>` assigned in join order, so ordering by that number
@@ -152,6 +153,12 @@ export function getLegalActions(
     case 'explore':
     case 'haunt': {
       if (state.activeSeat === seat && !player.isDead) {
+        // Every room getReachable offers must be MOVE-able: the property test
+        // walks getLegalActions straight into reduce, so the two must agree
+        // exactly (D-h).
+        for (const to of getReachable(state, seat, content)) {
+          actions.push({ t: 'MOVE', seat, to });
+        }
         actions.push({ t: 'END_TURN', seat });
       }
       break;

@@ -13,6 +13,7 @@ export {
   traitValue,
 } from './selectors.js';
 export { makeRng, next, nextInt, rollDice, shuffle } from './rng.js';
+export { beginTurnFor, findPath, getConnections, getReachable } from './movement.js';
 export {
   playGame,
   replay,

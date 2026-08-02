@@ -8,7 +8,7 @@
  * is what guarantees they can never disagree about where a door points.
  */
 
-import type { Dir, Rotation } from './ids.js';
+import type { Dir, Floor, PlacedId, Rotation } from './ids.js';
 
 export type Doors = Record<Dir, boolean>;
 
@@ -60,4 +60,15 @@ export function neighbourCell(x: number, y: number, dir: Dir): [number, number] 
 /** Must match the key format BoardState.index uses (packages/shared/src/state.ts). */
 export function cellKey(x: number, y: number): string {
   return `${x},${y}`;
+}
+
+/**
+ * A placed tile's id is derived from its cell rather than stored as a
+ * counter in state. Invariant 3 already forbids two tiles sharing a cell, so
+ * cell-derived ids are unique by a check that already runs on every
+ * reduction — no sequence to get out of step on replay, and the id is
+ * readable in a log (docs/04-data-model.md#the-house).
+ */
+export function placedIdFor(floor: Floor, x: number, y: number): PlacedId {
+  return `${floor}:${x},${y}`;
 }
