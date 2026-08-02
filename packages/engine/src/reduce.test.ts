@@ -1,11 +1,29 @@
 import { describe, expect, it } from 'vitest';
-import { fixtureContent } from '@bahoth/content';
+import {
+  buildContent,
+  fixtureContent,
+  type Content,
+  type House,
+  type Tile,
+} from '@bahoth/content';
 import { playGame, replay, startedGame } from './testing.js';
 import { reduce } from './reduce.js';
 import { makeSeatId } from './setup.js';
 import { getHostSeat, getLegalActions, traitValue } from './selectors.js';
 import { checkInvariants } from './invariants.js';
-import { TRAITS, type GameAction } from '@bahoth/shared';
+import { getConnections } from './movement.js';
+import { redactFor } from './redact.js';
+import { canDiscoverOn, drawTile } from './discovery.js';
+import { makeRng } from './rng.js';
+import {
+  FLOORS,
+  isRotateTilePayload,
+  placedIdFor,
+  TRAITS,
+  type Doors,
+  type GameAction,
+  type GameState,
+} from '@bahoth/shared';
 
 const content = fixtureContent();
 
@@ -736,10 +754,12 @@ describe('the remove-player vote', () => {
 
 describe('unimplemented actions', () => {
   it('are rejected cleanly rather than silently ignored', () => {
+    // MOVE_THROUGH and ROTATE_TILE are implemented as of M2; USE_ITEM is
+    // still a later milestone, so it is the example here now.
     const g = startedGame();
     const r = reduce(
       g.state,
-      { t: 'MOVE_THROUGH', seat: g.state.activeSeat!, dir: 'n' },
+      { t: 'USE_ITEM', seat: g.state.activeSeat!, cardId: 'card.does_not_exist' },
       content,
     );
     expect(r.error?.code).toBe('UNKNOWN_ACTION');
@@ -822,5 +842,561 @@ describe('makeSeatId', () => {
   it('is stable', () => {
     expect(makeSeatId(0)).toBe('seat_0');
     expect(makeSeatId(5)).toBe('seat_5');
+  });
+});
+
+// --- MOVE_THROUGH / ROTATE_TILE / discovery ---------------------------------
+
+function dtile(id: string, doors: Partial<Doors>, opts: Partial<Tile> = {}): Tile {
+  return {
+    id,
+    name: id,
+    doors: { n: false, e: false, s: false, w: false, ...doors },
+    floors: ['ground'],
+    symbol: null,
+    copies: 1,
+    staticLinks: [],
+    onEnter: [],
+    ...opts,
+  };
+}
+
+// Preplaced landings, and separate deck filler for the other two floors —
+// distinct tiles, because a preplaced tile can never also be a deck entry
+// (buildTileDeck excludes anything in house.layout).
+const D_LAND_B = dtile('tile.d_land_b', { n: true }, { floors: ['basement'] });
+const D_LAND_U = dtile('tile.d_land_u', { n: true }, { floors: ['upper'] });
+const D_FILL_B = dtile('tile.d_fill_b', { n: true }, { floors: ['basement'] });
+const D_FILL_U = dtile('tile.d_fill_u', { n: true }, { floors: ['upper'] });
+
+/**
+ * A one-room ground floor plus exactly one ground-legal deck tile. Only one
+ * candidate ever matches `floors.includes('ground')`, so which tile gets
+ * drawn is deterministic regardless of how the deck shuffle landed —
+ * `deckTiles` can hold as many basement/upper fillers as it likes ahead of
+ * it and the draw is still forced.
+ */
+function discoveryContent(start: Tile, ...deckTiles: Tile[]): Content {
+  const tiles = [start, ...deckTiles, D_LAND_B, D_LAND_U, D_FILL_B, D_FILL_U];
+  const house: House = {
+    layout: [
+      { tileId: start.id, floor: 'ground', x: 0, y: 0, rotation: 0 },
+      { tileId: D_LAND_B.id, floor: 'basement', x: 0, y: 0, rotation: 0 },
+      { tileId: D_LAND_U.id, floor: 'upper', x: 0, y: 0, rotation: 0 },
+    ],
+    startTile: start.id,
+    landings: { basement: D_LAND_B.id, ground: start.id, upper: D_LAND_U.id },
+  };
+  return buildContent(
+    { characters: fixtureContent().characters, tiles, house },
+    'reduce.test.ts',
+  );
+}
+
+const START_1DOOR = dtile('tile.start_1door', { n: true });
+const AUTO4 = dtile('tile.auto4', { n: true, e: true, s: true, w: true });
+// Adjacent (not opposite) doors: no rotational symmetry, so two distinct
+// rotations put a door on the entry — see discovery.test.ts for why an
+// opposite-door tile cannot do this.
+const CORNER = dtile('tile.corner', { n: true, e: true });
+
+describe('MOVE_THROUGH: happy path', () => {
+  it('places the tile, updates the index, moves the explorer, and connects the rooms', () => {
+    const c = discoveryContent(START_1DOOR, AUTO4);
+    const g = startedGame({ content: c });
+    const seat = g.state.activeSeat!;
+    const start = g.state.players[seat]!.location!;
+
+    const res = reduce(g.state, { t: 'MOVE_THROUGH', seat, dir: 'n' }, c);
+    expect(res.error).toBeUndefined();
+
+    const newId = placedIdFor('ground', 0, -1);
+    const placed = res.state.board.placed[newId];
+    expect(placed?.tileId).toBe(AUTO4.id);
+    expect(placed?.discoveredBy).toBe(seat);
+    expect(res.state.board.index.ground['0,-1']).toBe(newId);
+
+    // discovered before moved, in that order.
+    expect(res.events.map((e) => e.t)).toEqual(['discovered', 'moved']);
+
+    const player = res.state.players[seat]!;
+    expect(player.location).toBe(newId);
+    expect(player.cameFrom).toBe(start);
+    expect(player.movesLeft).toBe(g.state.players[seat]!.movesLeft - 1);
+
+    // The whole point of the rotation rule: the two rooms are now really
+    // connected, not just recorded as if they were.
+    expect(getConnections(res.state, start, c)).toContain(newId);
+    expect(getConnections(res.state, newId, c)).toContain(start);
+
+    expect(checkInvariants(res.state)).toEqual([]);
+  });
+
+  it('shrinks the deck by exactly one and removes the drawn tile', () => {
+    const c = discoveryContent(START_1DOOR, AUTO4);
+    const g = startedGame({ content: c });
+    const seat = g.state.activeSeat!;
+    const before = g.state.tileDeck.length;
+
+    const res = reduce(g.state, { t: 'MOVE_THROUGH', seat, dir: 'n' }, c);
+    expect(res.error).toBeUndefined();
+    expect(res.state.tileDeck).toHaveLength(before - 1);
+    expect(res.state.tileDeck).not.toContain(AUTO4.id);
+  });
+
+  it('auto-applies with no prompt when only one rotation is legal', () => {
+    const c = discoveryContent(START_1DOOR, AUTO4);
+    const g = startedGame({ content: c });
+    const seat = g.state.activeSeat!;
+
+    const res = reduce(g.state, { t: 'MOVE_THROUGH', seat, dir: 'n' }, c);
+    expect(res.error).toBeUndefined();
+    expect(res.state.pending).toBeNull();
+    const newId = placedIdFor('ground', 0, -1);
+    expect(res.state.board.placed[newId]).toBeDefined();
+  });
+});
+
+describe('MOVE_THROUGH: rejections', () => {
+  it('rejects a seat that is not active', () => {
+    const c = discoveryContent(START_1DOOR, AUTO4);
+    const g = startedGame({ content: c });
+    const seat = g.state.activeSeat!;
+    const other = Object.keys(g.state.players).find((s) => s !== seat)!;
+
+    const res = reduce(g.state, { t: 'MOVE_THROUGH', seat: other, dir: 'n' }, c);
+    expect(res.error?.code).toBe('NOT_YOUR_TURN');
+  });
+
+  it('rejects a direction with no door', () => {
+    const c = discoveryContent(START_1DOOR, AUTO4);
+    const g = startedGame({ content: c });
+    const seat = g.state.activeSeat!;
+
+    const res = reduce(g.state, { t: 'MOVE_THROUGH', seat, dir: 'e' }, c);
+    expect(res.error?.code).toBe('ILLEGAL_MOVE');
+  });
+
+  it('rejects a doorway whose neighbour cell is already built', () => {
+    const NEXT = dtile('tile.next', { s: true });
+    const tiles = [START_1DOOR, NEXT, AUTO4, D_LAND_B, D_LAND_U, D_FILL_B, D_FILL_U];
+    const house: House = {
+      layout: [
+        { tileId: START_1DOOR.id, floor: 'ground', x: 0, y: 0, rotation: 0 },
+        { tileId: NEXT.id, floor: 'ground', x: 0, y: -1, rotation: 0 },
+        { tileId: D_LAND_B.id, floor: 'basement', x: 0, y: 0, rotation: 0 },
+        { tileId: D_LAND_U.id, floor: 'upper', x: 0, y: 0, rotation: 0 },
+      ],
+      startTile: START_1DOOR.id,
+      landings: { basement: D_LAND_B.id, ground: START_1DOOR.id, upper: D_LAND_U.id },
+    };
+    const c = buildContent(
+      { characters: fixtureContent().characters, tiles, house },
+      'reduce.test.ts',
+    );
+    const g = startedGame({ content: c });
+    const seat = g.state.activeSeat!;
+
+    const res = reduce(g.state, { t: 'MOVE_THROUGH', seat, dir: 'n' }, c);
+    expect(res.error?.code).toBe('ILLEGAL_MOVE');
+    expect(res.error?.message).toMatch(/MOVE/);
+  });
+
+  it('rejects when movesLeft is 0', () => {
+    const c = discoveryContent(START_1DOOR, AUTO4);
+    const g = startedGame({ content: c });
+    const seat = g.state.activeSeat!;
+    const state: GameState = {
+      ...g.state,
+      players: {
+        ...g.state.players,
+        [seat]: { ...g.state.players[seat]!, movesLeft: 0 },
+      },
+    };
+
+    const res = reduce(state, { t: 'MOVE_THROUGH', seat, dir: 'n' }, c);
+    expect(res.error?.code).toBe('ILLEGAL_MOVE');
+  });
+
+  it('rejects a second MOVE_THROUGH while a rotate_tile prompt is pending', () => {
+    const c = discoveryContent(START_1DOOR, CORNER);
+    const g = startedGame({ content: c });
+    const seat = g.state.activeSeat!;
+
+    const first = reduce(g.state, { t: 'MOVE_THROUGH', seat, dir: 'n' }, c);
+    expect(first.error).toBeUndefined();
+    expect(first.state.pending).not.toBeNull();
+
+    const second = reduce(first.state, { t: 'MOVE_THROUGH', seat, dir: 'n' }, c);
+    expect(second.error?.code).toBe('PROMPT_PENDING');
+  });
+
+  it('deck exhaustion: rejected by reduce AND absent from getLegalActions, on both real and redacted state', () => {
+    // Once nothing left in the deck is legal on this floor, the doorway must
+    // stop being offered AND stop being acceptable — the pair is the
+    // invariant (getLegalActions feeds property.test.ts straight into
+    // reduce). "Nothing left" is now derived from content + board
+    // (`canDiscoverOn`), not read off `state.tileDeck` directly — so the way
+    // to exhaust it in a test is to place every copy, not to edit tileDeck
+    // by hand. AUTO4 has copies: 1 (the dtile() default), so one placement
+    // uses it up.
+    const c = discoveryContent(START_1DOOR, AUTO4);
+    const g = startedGame({ content: c });
+    const seat = g.state.activeSeat!;
+    const ghostId = placedIdFor('ground', 99, 99);
+    const emptied: GameState = {
+      ...g.state,
+      tileDeck: g.state.tileDeck.filter((id) => id !== AUTO4.id),
+      board: {
+        ...g.state.board,
+        placed: {
+          ...g.state.board.placed,
+          [ghostId]: {
+            id: ghostId,
+            tileId: AUTO4.id,
+            floor: 'ground',
+            x: 99,
+            y: 99,
+            rotation: 0,
+            discoveredBy: null,
+            flags: {},
+          },
+        },
+        index: {
+          ...g.state.board.index,
+          ground: { ...g.state.board.index.ground, '99,99': ghostId },
+        },
+      },
+    };
+
+    for (const view of [emptied, redactFor(emptied, seat)]) {
+      const legal = getLegalActions(view, seat, c);
+      expect(legal.some((a) => a.t === 'MOVE_THROUGH')).toBe(false);
+    }
+
+    const res = reduce(emptied, { t: 'MOVE_THROUGH', seat, dir: 'n' }, c);
+    expect(res.error?.code).toBe('ILLEGAL_MOVE');
+  });
+});
+
+describe('canDiscoverOn: derived from content + board, not state.tileDeck', () => {
+  it('agrees with drawTile on every floor, including after several discoveries and after exhaustion', () => {
+    const rng = makeRng(1);
+
+    // A handful of real discoveries against the fixture house, so board
+    // composition has actually moved away from the starting layout.
+    const g = startedGame();
+    const seat = g.state.activeSeat!;
+    const foyer = placedIdFor('ground', 0, 1);
+    let state = reduce(g.state, { t: 'MOVE', seat, to: foyer }, content).state;
+    for (const dir of ['e', 'w'] as const) {
+      const res = reduce(state, { t: 'MOVE_THROUGH', seat, dir }, content);
+      if (res.error) continue;
+      state = res.state;
+      // A prompt (if raised) is answered on its default so the walk keeps
+      // going and the board keeps changing.
+      if (state.pending?.kind === 'rotate_tile') {
+        const answer = state.pending.defaultAnswer as never;
+        const answered = reduce(
+          state,
+          { t: 'ROTATE_TILE', seat, rotation: answer },
+          content,
+        );
+        if (!answered.error) state = answered.state;
+      }
+    }
+
+    for (const floor of FLOORS) {
+      expect(canDiscoverOn(state, floor, content)).toBe(
+        drawTile(state.tileDeck, floor, content, rng) !== null,
+      );
+    }
+
+    // Now exhaust the ground floor by hand (place every remaining
+    // ground-legal deck tile as if it had been discovered) and check again.
+    const groundIds = new Set(
+      content.deckTiles.filter((id) => content.tilesById[id]?.floors.includes('ground')),
+    );
+    let exhausted = state;
+    let i = 0;
+    for (const id of groundIds) {
+      const ghostId = placedIdFor('ground', 500 + i, 500 + i);
+      exhausted = {
+        ...exhausted,
+        board: {
+          ...exhausted.board,
+          placed: {
+            ...exhausted.board.placed,
+            [ghostId]: {
+              id: ghostId,
+              tileId: id,
+              floor: 'ground',
+              x: 500 + i,
+              y: 500 + i,
+              rotation: 0,
+              discoveredBy: null,
+              flags: {},
+            },
+          },
+          index: {
+            ...exhausted.board.index,
+            ground: {
+              ...exhausted.board.index.ground,
+              [`${500 + i},${500 + i}`]: ghostId,
+            },
+          },
+        },
+        tileDeck: exhausted.tileDeck.filter((tid) => tid !== id),
+      };
+      i++;
+    }
+
+    expect(canDiscoverOn(exhausted, 'ground', content)).toBe(false);
+    for (const floor of FLOORS) {
+      expect(canDiscoverOn(exhausted, floor, content)).toBe(
+        drawTile(exhausted.tileDeck, floor, content, rng) !== null,
+      );
+    }
+  });
+});
+
+describe('legality parity between real and redacted state', () => {
+  it('offers the same non-empty MOVE_THROUGH set on both — the whole point of docs/05-engine.md#57', () => {
+    const g = startedGame();
+    const seat = g.state.activeSeat!;
+    const foyer = placedIdFor('ground', 0, 1);
+    const toFoyer = reduce(g.state, { t: 'MOVE', seat, to: foyer }, content);
+    expect(toFoyer.error).toBeUndefined();
+
+    const dirsOf = (state: GameState) =>
+      getLegalActions(state, seat, content)
+        .filter(
+          (a): a is Extract<GameAction, { t: 'MOVE_THROUGH' }> => a.t === 'MOVE_THROUGH',
+        )
+        .map((a) => a.dir)
+        .sort();
+
+    const real = dirsOf(toFoyer.state);
+    const redacted = dirsOf(redactFor(toFoyer.state, seat));
+
+    // Not vacuously true: the foyer's e/w doors are undiscovered in the
+    // fixture starting layout, so this must be non-empty on the server.
+    expect(real.length).toBeGreaterThan(0);
+    expect(redacted).toEqual(real);
+  });
+});
+
+describe('invariants: rotate_tile prompt coherence', () => {
+  it('flags a prompt whose target cell is already built', () => {
+    const c = discoveryContent(START_1DOOR, CORNER);
+    const g = startedGame({ content: c });
+    const seat = g.state.activeSeat!;
+    const raised = reduce(g.state, { t: 'MOVE_THROUGH', seat, dir: 'n' }, c);
+    const payload = raised.state.pending!.payload;
+    if (!isRotateTilePayload(payload)) throw new Error('expected a RotateTilePayload');
+
+    // Pretend the target cell got built by something else in the meantime —
+    // exactly the situation `finishDiscovery`'s cell guard exists to catch.
+    const corrupted: GameState = {
+      ...raised.state,
+      board: {
+        ...raised.state.board,
+        index: {
+          ...raised.state.board.index,
+          [payload.floor]: {
+            ...raised.state.board.index[payload.floor],
+            '0,-1': 'ground:0,0',
+          },
+        },
+      },
+    };
+    expect(checkInvariants(corrupted).some((p) => p.includes('already built'))).toBe(
+      true,
+    );
+  });
+});
+
+describe('rotate_tile prompt', () => {
+  it('raises a prompt without moving the explorer or spending a move, and constrains getLegalActions', () => {
+    const c = discoveryContent(START_1DOOR, CORNER);
+    const g = startedGame({ content: c });
+    const seat = g.state.activeSeat!;
+    const other = Object.keys(g.state.players).find((s) => s !== seat)!;
+    const start = g.state.players[seat]!.location!;
+    const movesBefore = g.state.players[seat]!.movesLeft;
+
+    const res = reduce(g.state, { t: 'MOVE_THROUGH', seat, dir: 'n' }, c);
+    expect(res.error).toBeUndefined();
+    expect(res.state.pending?.kind).toBe('rotate_tile');
+    expect(res.state.pending?.seatId).toBe(seat);
+    expect(res.state.players[seat]!.location).toBe(start);
+    expect(res.state.players[seat]!.movesLeft).toBe(movesBefore);
+    expect(placedIdFor('ground', 0, -1) in res.state.board.placed).toBe(false);
+
+    const payload = res.state.pending!.payload;
+    if (!isRotateTilePayload(payload)) throw new Error('expected a RotateTilePayload');
+    expect(payload.legalRotations.length).toBeGreaterThanOrEqual(2);
+
+    const mine = getLegalActions(res.state, seat, c);
+    expect(mine).toHaveLength(payload.legalRotations.length);
+    expect(mine.every((a) => a.t === 'ROTATE_TILE')).toBe(true);
+    expect(getLegalActions(res.state, other, c)).toEqual([]);
+  });
+
+  it('rejects an illegal rotation and accepts a legal one', () => {
+    const c = discoveryContent(START_1DOOR, CORNER);
+    const g = startedGame({ content: c });
+    const seat = g.state.activeSeat!;
+
+    const raised = reduce(g.state, { t: 'MOVE_THROUGH', seat, dir: 'n' }, c);
+    const payload = raised.state.pending!.payload;
+    if (!isRotateTilePayload(payload)) throw new Error('expected a RotateTilePayload');
+    const illegal = ([0, 90, 180, 270] as const).find(
+      (r) => !payload.legalRotations.includes(r),
+    )!;
+
+    const rejected = reduce(
+      raised.state,
+      { t: 'ROTATE_TILE', seat, rotation: illegal },
+      c,
+    );
+    expect(rejected.error?.code).toBe('ILLEGAL_MOVE');
+
+    const accepted = reduce(
+      raised.state,
+      { t: 'ROTATE_TILE', seat, rotation: payload.legalRotations[0]! },
+      c,
+    );
+    expect(accepted.error).toBeUndefined();
+    expect(accepted.state.pending).toBeNull();
+    const newId = placedIdFor('ground', 0, -1);
+    expect(accepted.state.board.placed[newId]?.rotation).toBe(payload.legalRotations[0]);
+    expect(accepted.state.players[seat]!.location).toBe(newId);
+  });
+
+  it('places the tile on the default rotation and ends the turn when the turn clock expires', () => {
+    const c = discoveryContent(START_1DOOR, CORNER);
+    const g = startedGame({ content: c });
+    const seat = g.state.activeSeat!;
+
+    const raised = reduce(g.state, { t: 'MOVE_THROUGH', seat, dir: 'n' }, c);
+    expect(raised.state.pending).not.toBeNull();
+    const defaultAnswer = raised.state.pending!.defaultAnswer;
+
+    // Arm the turn clock, then tick past it.
+    const armed = reduce(raised.state, { t: 'TICK', now: 1_700_000_000_000 }, c);
+    expect(armed.state.turnDeadline).not.toBeNull();
+    const expired = reduce(
+      armed.state,
+      { t: 'TICK', now: armed.state.turnDeadline! + 1 },
+      c,
+    );
+
+    expect(expired.error).toBeUndefined();
+    expect(expired.state.pending).toBeNull();
+    const newId = placedIdFor('ground', 0, -1);
+    const placed = expired.state.board.placed[newId];
+    expect(placed).toBeDefined();
+    expect(placed?.rotation).toBe(defaultAnswer);
+    // The regression this guards: the tile really is on the board, not
+    // dropped along with the prompt that carried it.
+    expect(expired.state.activeSeat).not.toBe(seat);
+  });
+
+  it('resolves a prompt whose own deadline has already passed on TICK', () => {
+    const c = discoveryContent(START_1DOOR, CORNER);
+    const g = startedGame({ content: c });
+    const seat = g.state.activeSeat!;
+
+    const raised = reduce(g.state, { t: 'MOVE_THROUGH', seat, dir: 'n' }, c);
+    const defaultAnswer = raised.state.pending!.defaultAnswer;
+    // The server does not set deadlines yet (that is the next milestone
+    // item) — set one by hand to exercise the resolution path.
+    const withDeadline: GameState = {
+      ...raised.state,
+      pending: { ...raised.state.pending!, deadline: 1_700_000_000_000 },
+    };
+
+    const res = reduce(withDeadline, { t: 'TICK', now: 1_700_000_000_001 }, c);
+    expect(res.error).toBeUndefined();
+    expect(res.state.pending).toBeNull();
+    const newId = placedIdFor('ground', 0, -1);
+    expect(res.state.board.placed[newId]?.rotation).toBe(defaultAnswer);
+  });
+});
+
+// A rotate_tile prompt can only be raised as of this PR — before it, no
+// prompt could ever exist, so a prompt owner leaving mid-prompt was
+// unreachable. Now it is reachable, both via CONCEDE and via a removal vote,
+// and either path must not strand the room: `getLegalActions` keys the
+// pending branch off `pending.seatId === seat` and returns `[]` outright for
+// a `removed` seat, so an unresolved prompt whose owner is gone or removed
+// blocks every seat until the ten-minute turn clock bails it out — D5's
+// shape (docs/11-progress.md).
+describe('a prompted seat leaving does not strand the room', () => {
+  it("CONCEDE resolves the conceding seat's own rotate_tile prompt on its default first", () => {
+    const c = discoveryContent(START_1DOOR, CORNER);
+    const g = startedGame({ content: c });
+    const seat = g.state.activeSeat!;
+
+    const raised = reduce(g.state, { t: 'MOVE_THROUGH', seat, dir: 'n' }, c);
+    expect(raised.state.pending?.seatId).toBe(seat);
+    const defaultAnswer = raised.state.pending!.defaultAnswer;
+
+    const conceded = reduce(raised.state, { t: 'CONCEDE', seat }, c);
+    expect(conceded.error).toBeUndefined();
+    expect(conceded.state.pending).toBeNull();
+
+    const newId = placedIdFor('ground', 0, -1);
+    const placed = conceded.state.board.placed[newId];
+    expect(placed).toBeDefined();
+    expect(placed?.rotation).toBe(defaultAnswer);
+
+    // The deadlock, stated directly: a seat that is still playing must have
+    // something to do — before the fix this was `[]` because `pending` still
+    // pointed at the now-dead conceding seat.
+    const active = conceded.state.activeSeat!;
+    expect(active).not.toBe(seat);
+    expect(getLegalActions(conceded.state, active, c).length).toBeGreaterThan(0);
+  });
+
+  it("a removal vote resolves the removed seat's rotate_tile prompt on its default first", () => {
+    const c = discoveryContent(START_1DOOR, CORNER);
+    const g = startedGame({ content: c });
+    const seat = g.state.activeSeat!;
+    const others = g.state.turnOrder.filter((s) => s !== seat);
+
+    const raised = reduce(g.state, { t: 'MOVE_THROUGH', seat, dir: 'n' }, c);
+    expect(raised.state.pending?.seatId).toBe(seat);
+    const defaultAnswer = raised.state.pending!.defaultAnswer;
+
+    const T0 = 1_700_000_000_000;
+    let state = reduce(raised.state, { t: 'DISCONNECT', seat, at: T0 }, c).state;
+    for (const voter of others) {
+      const res = reduce(
+        state,
+        { t: 'VOTE_REMOVE', seat: voter, target: seat, vote: true },
+        c,
+      );
+      expect(res.error).toBeUndefined();
+      state = res.state;
+    }
+
+    // A single TICK, past the grace period, is what carries the removal —
+    // resolveRemovals runs before tick's own prompt-deadline branch, so this
+    // exercises resolveRemovals's own fix, not the deadline branch's.
+    const removed = reduce(state, { t: 'TICK', now: T0 + state.timers.removeGraceMs }, c);
+    expect(removed.error).toBeUndefined();
+    expect(removed.state.players[seat]?.removed).toBe(true);
+    expect(removed.state.pending).toBeNull();
+
+    const newId = placedIdFor('ground', 0, -1);
+    const placed = removed.state.board.placed[newId];
+    expect(placed).toBeDefined();
+    expect(placed?.rotation).toBe(defaultAnswer);
+
+    const active = removed.state.activeSeat!;
+    expect(active).not.toBe(seat);
+    expect(getLegalActions(removed.state, active, c).length).toBeGreaterThan(0);
   });
 });

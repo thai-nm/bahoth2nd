@@ -198,7 +198,11 @@ relevant document, not into this list.
    10 minutes, configurable via `REMOVE_GRACE_SECONDS`. Still a guess, but now
    a guess with a dial on it. The vote may be cast at any time; only its effect
    waits for the grace period.
-6. **Does the client need the tile deck count?** (M1 redaction). Showing
-   "18 rooms left" is a nice touch and leaks nothing meaningful. Probably yes.
-7. **Rotation prompt when only one rotation is legal** (M2). Auto-apply, or
-   still confirm? Current plan: auto-apply, since there is no decision to make.
+6. ~~**Does the client need the tile deck count?**~~ Settled in M2: yes.
+   `redactFor` empties `tileDeck` and carries `tileDeckCount`, the same
+   treatment the card draw piles already get. The deck's _order_ is the secret;
+   its composition is public anyway, since content and the board both are.
+7. ~~**Rotation prompt when only one rotation is legal** (M2).~~ Settled in M2:
+   auto-apply. "Only one" is counted after deduplicating rotations by their
+   effective doors, so a four-door tile auto-applies too — its four rotations
+   are the same room, and a prompt with no consequence is worse than none.

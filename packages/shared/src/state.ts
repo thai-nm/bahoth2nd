@@ -10,6 +10,7 @@ import type {
   CardId,
   CharId,
   DeckKind,
+  Dir,
   Floor,
   HauntId,
   MonsterId,
@@ -126,6 +127,45 @@ export interface PendingPrompt {
   defaultAnswer: unknown;
 }
 
+/**
+ * `PendingPrompt.payload` when `kind === 'rotate_tile'`. Carries everything
+ * needed to finish the discovery, because the prompt IS the resume point
+ * (docs/05-engine.md#56: "keep that resume state small and explicit").
+ */
+export interface RotateTilePayload {
+  /** The tile already drawn off the deck — it is committed, not re-drawable. */
+  tileId: TileId;
+  /** Where it will land. */
+  floor: Floor;
+  x: number;
+  y: number;
+  /** The room being left, and the direction moved out of it. */
+  from: PlacedId;
+  dir: Dir;
+  /** Rotations that put a door on the edge facing `from`. Never empty. */
+  legalRotations: Rotation[];
+}
+
+/**
+ * Narrows `PendingPrompt.payload` without either side importing engine
+ * internals: shared owns the shape, invariants.ts and the client both need
+ * to check it, and neither should have to import from `@bahoth/engine`.
+ */
+export function isRotateTilePayload(p: unknown): p is RotateTilePayload {
+  if (typeof p !== 'object' || p === null) return false;
+  const r = p as Record<string, unknown>;
+  return (
+    typeof r.tileId === 'string' &&
+    typeof r.floor === 'string' &&
+    typeof r.x === 'number' &&
+    typeof r.y === 'number' &&
+    typeof r.from === 'string' &&
+    typeof r.dir === 'string' &&
+    Array.isArray(r.legalRotations) &&
+    r.legalRotations.length > 0
+  );
+}
+
 export interface MonsterState {
   id: MonsterId;
   def: string;
@@ -180,6 +220,14 @@ export interface GameState {
    */
   turnDeadline: number | null;
   board: BoardState;
+  /**
+   * The room tiles left to discover, index 0 is the top. Shuffled from
+   * `content.deckTiles` at START_GAME with the in-state RNG. Redacted for
+   * clients (docs/06-networking.md#64: "Tile deck order — same treatment").
+   */
+  tileDeck: TileId[];
+  /** Present only on redacted states, where `tileDeck` has been emptied. */
+  tileDeckCount?: number;
   decks: Record<DeckKind, DeckState>;
   omensDrawn: number;
   haunt: HauntState | null;

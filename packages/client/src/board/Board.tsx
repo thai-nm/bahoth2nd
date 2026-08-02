@@ -12,8 +12,16 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
-import { DIR_ORDER, FLOORS } from '@bahoth/shared';
-import type { BoardState, Colour, Dir, Floor, PlacedId } from '@bahoth/shared';
+import { DIR_ORDER, FLOORS, rotateDoors } from '@bahoth/shared';
+import type {
+  BoardState,
+  Colour,
+  Dir,
+  Floor,
+  PlacedId,
+  Rotation,
+  TileId,
+} from '@bahoth/shared';
 import type { Content } from '@bahoth/content';
 import {
   TILE,
@@ -41,7 +49,29 @@ interface BoardProps {
   /** Comes from `getReachable`, filtered to this floor — the caller's job, not this component's. */
   reachable?: readonly PlacedId[] | undefined;
   onMoveTo?: ((placedId: PlacedId) => void) | undefined;
-  onMoveThrough?: ((placedId: PlacedId, dir: Dir) => void) | undefined;
+  /**
+   * Liveness comes from the engine, not from geometry (docs/05-engine.md#57:
+   * one legality function). `openDoorways` (layout.ts) returns an arrow for
+   * every open door on the floor, including rooms the seat is not standing
+   * in — this narrows that to the ones `getLegalActions` actually offers.
+   */
+  moveThrough?:
+    | {
+        /** The room the seat is standing in — only its arrows can be used. */
+        from: PlacedId;
+        /** Directions `getLegalActions` actually offers. */
+        dirs: readonly Dir[];
+        onMove: (dir: Dir) => void;
+      }
+    | undefined;
+  /**
+   * A tile drawn but not yet placed: rendered semi-transparent at its cell.
+   * Deliberately excluded from `boardBounds` — it always sits adjacent to a
+   * placed tile (it is the room just discovered off one), so it is on screen
+   * anyway, and letting it affect the fit would make the viewport jump for a
+   * tile that has no confirmed position yet.
+   */
+  ghost?: { tileId: TileId; x: number; y: number; rotation: Rotation } | undefined;
 }
 
 /** Breathing room around the floor when fitting it to the viewport, in px. */
@@ -62,7 +92,8 @@ export function Board({
   pawns,
   reachable,
   onMoveTo,
-  onMoveThrough,
+  moveThrough,
+  ghost,
 }: BoardProps) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{ startX: number; startY: number; origin: PanZoom } | null>(
@@ -86,6 +117,30 @@ export function Board({
     }
     return map;
   }, [pawns]);
+
+  // Built the same way tileViewsForFloor builds a real TileView (doors
+  // rotated once, here, so nothing downstream touches rotation again), but
+  // kept OUT of `views`/`boardBounds` — see the doc comment on `ghost` in
+  // BoardProps for why a ghost must never change the fit.
+  const ghostView = useMemo<TileView | null>(() => {
+    if (!ghost) return null;
+    const tile = content.tilesById[ghost.tileId];
+    if (!tile) return null;
+    return {
+      placedId: `ghost:${ghost.tileId}`,
+      tileId: ghost.tileId,
+      name: tile.name,
+      x: ghost.x,
+      y: ghost.y,
+      rotation: ghost.rotation,
+      doors: rotateDoors(tile.doors, ghost.rotation),
+      symbol: tile.symbol,
+      floors: tile.floors,
+      links: [],
+      px: ghost.x * TILE,
+      py: ghost.y * TILE,
+    };
+  }, [ghost, content]);
 
   const fitFloor = useCallback(() => {
     const vp = viewportRef.current;
@@ -232,19 +287,37 @@ export function Board({
               onMoveTo={onMoveTo}
             />
           ))}
-          {doorways.map((d) => (
-            <button
-              key={`${d.placedId}:${d.dir}`}
-              type="button"
-              className={`doorway doorway--${d.dir} ${onMoveThrough ? 'doorway--live' : 'doorway--dim'}`}
-              style={{ left: d.px, top: d.py }}
-              disabled={!onMoveThrough}
-              onClick={() => onMoveThrough?.(d.placedId, d.dir)}
-              aria-label={`Open doorway, ${DIR_LABEL[d.dir]}`}
-            >
-              <span aria-hidden="true">▲</span>
-            </button>
-          ))}
+          {doorways.map((d) => {
+            const live =
+              moveThrough !== undefined &&
+              d.placedId === moveThrough.from &&
+              moveThrough.dirs.includes(d.dir);
+            return (
+              <button
+                key={`${d.placedId}:${d.dir}`}
+                type="button"
+                className={`doorway doorway--${d.dir} ${live ? 'doorway--live' : 'doorway--dim'}`}
+                style={{ left: d.px, top: d.py }}
+                disabled={!live}
+                onClick={() => moveThrough && live && moveThrough.onMove(d.dir)}
+                aria-label={`Open doorway, ${DIR_LABEL[d.dir]}`}
+              >
+                <span aria-hidden="true">▲</span>
+              </button>
+            );
+          })}
+          {ghostView && (
+            <Tile
+              key={ghostView.placedId}
+              view={ghostView}
+              content={content}
+              floor={floor}
+              reachable={false}
+              pawns={[]}
+              onMoveTo={undefined}
+              ghost
+            />
+          )}
         </div>
       </div>
     </div>
@@ -286,9 +359,11 @@ interface TileProps {
   reachable: boolean;
   pawns: readonly Pawn[];
   onMoveTo: ((placedId: PlacedId) => void) | undefined;
+  /** A drawn-but-unplaced tile preview: dimmed, dashed border, never a button. */
+  ghost?: boolean;
 }
 
-function Tile({ view, content, floor, reachable, pawns, onMoveTo }: TileProps) {
+function Tile({ view, content, floor, reachable, pawns, onMoveTo, ghost }: TileProps) {
   const tile = content.tilesById[view.tileId];
   // Doors are drawn in the tile's PRINTED frame and then the frame itself is
   // rotated (docs/07-ui.md#73: "Rotation is a CSS transform on the tile's
@@ -372,7 +447,7 @@ function Tile({ view, content, floor, reachable, pawns, onMoveTo }: TileProps) {
     );
   }
   return (
-    <div className="tile" style={style}>
+    <div className={`tile${ghost ? ' tile--ghost' : ''}`} style={style}>
       {content_}
     </div>
   );

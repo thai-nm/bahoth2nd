@@ -100,6 +100,30 @@ describe('redactFor', () => {
     expect(redacted.contentHash).toBe(state.contentHash);
   });
 
+  it('leaks no tile deck id and keeps an accurate count', () => {
+    // Same treatment as the card draw piles (docs/06-networking.md#64).
+    const state = startedGame().state;
+    expect(state.tileDeck.length).toBeGreaterThan(0);
+    const onBoard = new Set(Object.values(state.board.placed).map((t) => t.tileId));
+
+    for (const viewer of [...state.turnOrder, null]) {
+      const redacted = redactFor(state, viewer);
+      expect(redacted.tileDeck).toEqual([]);
+      expect(redacted.tileDeckCount).toBe(state.tileDeck.length);
+
+      const json = JSON.stringify(redacted);
+      for (const tileId of state.tileDeck) {
+        // A tile id that also happens to be pre-placed on the board is
+        // legitimately visible (it is public there) — only ids that are
+        // NOT on the board would be a leak of hidden deck order/contents.
+        if (onBoard.has(tileId)) continue;
+        expect(json, `viewer ${viewer} saw deck tile ${tileId}`).not.toContain(
+          `"${tileId}"`,
+        );
+      }
+    }
+  });
+
   it('does not mutate the input state', () => {
     const state = withStockedDecks(startedGame().state);
     const before = JSON.stringify(state);

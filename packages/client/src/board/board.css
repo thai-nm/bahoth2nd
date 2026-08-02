@@ -81,6 +81,32 @@
   color: var(--ink);
   text-align: left;
   cursor: default;
+  /* Only a freshly-mounted tile plays this — an existing tile keeps its key
+     (placedId) across re-renders, so re-renders never replay it. A ghost
+     tile (docs/07-ui.md#73) is its own element too, and animating its
+     appearance reads as "a room is about to exist here", which is the point. */
+  animation: tile-enter 200ms ease-out;
+}
+@keyframes tile-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* A tile drawn but not yet placed (docs/07-ui.md#73: "renders semi-
+   transparent"). Never a button — see Board.tsx's Tile component, which
+   only reaches the div branch for a ghost. */
+.tile--ghost {
+  opacity: 0.55;
+  pointer-events: none;
+}
+.tile--ghost .tile__frame {
+  border-style: dashed;
 }
 .tile--reachable {
   cursor: pointer;
