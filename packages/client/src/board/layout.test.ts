@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { OPPOSITE, cellKey, neighbourCell } from '@bahoth/shared';
+import { DIR_ORDER, OPPOSITE, cellKey, neighbourCell } from '@bahoth/shared';
 import type { BoardState, Dir, Floor, PlacedTile, Rotation } from '@bahoth/shared';
 import { fixtureContent } from '@bahoth/content';
 import { checkInvariants, createInitialState } from '@bahoth/engine';
@@ -145,6 +145,39 @@ describe('openDoorways', () => {
 
   it('produces nothing for an empty floor', () => {
     expect(openDoorways([])).toEqual([]);
+  });
+
+  it('re-evaluates open vs occupied against EFFECTIVE (rotated) doors, not printed ones', () => {
+    // tile.entrance_hall prints a single north door. Rotated 90 it faces
+    // east instead (asserted above in tileViewsForFloor), so a tile placed
+    // to its east should close that doorway, while a tile placed to its
+    // (still-open, printed) north should NOT — proof that occupancy here is
+    // checked against the rotated doors layout.ts computes, not the raw
+    // content. Exercised for a rotation on each of the four cardinal exits
+    // by rotating which one lines up with the occupied neighbour.
+    for (const rotation of [0, 90, 180, 270] as Rotation[]) {
+      const board = makeBoard([
+        { id: 'p1', tileId: 'tile.entrance_hall', floor: 'ground', x: 0, y: 0, rotation },
+        // A neighbour directly east of p1, occupying whichever cell the
+        // rotated door happens to face when rotation === 90.
+        { id: 'p2', tileId: 'tile.foyer', floor: 'ground', x: 1, y: 0, rotation: 0 },
+      ]);
+      const views = tileViewsForFloor(board, content, 'ground');
+      const doorways = openDoorways(views);
+      const p1 = views.find((v) => v.placedId === 'p1')!;
+      const effectiveDir = DIR_ORDER.find((d) => p1.doors[d]);
+      expect(effectiveDir).toBeDefined();
+
+      if (effectiveDir === 'e') {
+        // The door faces the occupied neighbour: no open doorway there.
+        expect(doorways.some((d) => d.placedId === 'p1')).toBe(false);
+      } else {
+        // The door faces an empty cell: it is an open doorway.
+        expect(doorways.some((d) => d.placedId === 'p1' && d.dir === effectiveDir)).toBe(
+          true,
+        );
+      }
+    }
   });
 });
 

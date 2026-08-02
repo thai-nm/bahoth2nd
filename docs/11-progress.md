@@ -10,7 +10,7 @@ Living status document. Updated when a milestone moves, not on a schedule.
 | -------------------------------- | -------------- | ------------------------------------------------------------- |
 | M0 — Skeleton and the spine      | ✅ Complete    | Merged — [PR #2](https://github.com/thai-nm/bahoth2nd/pull/2) |
 | M1 — Seats, identity, redaction  | ✅ Complete    | All nine items; D1–D5 closed                                  |
-| M2 — The house                   | 🟨 In progress | Tiles, renderer, movement, and wiring done; discovery to come |
+| M2 — The house                   | 🟨 In progress | The house is now explorable end to end; prompts and log left  |
 | M3 — Cards, traits, dice         | ⬜ Not started |                                                               |
 | M4 — The haunt, and five of them | ⬜ Not started |                                                               |
 | M5 — Polish                      | ⬜ Not started |                                                               |
@@ -21,8 +21,8 @@ Living status document. Updated when a milestone moves, not on a schedule.
 ## M2 — in progress
 
 Planned as four PRs — content, movement, discovery, renderer — and running as
-five, because the renderer turned out not to need the movement graph and went
-early (deviation 8).
+six, because the renderer turned out not to need the movement graph and went
+early (deviation 8), and wiring it to the engine was worth its own diff.
 
 | Item                                                    | Status                                                        |
 | ------------------------------------------------------- | ------------------------------------------------------------- |
@@ -30,9 +30,9 @@ early (deviation 8).
 | Rotation and grid primitives in `shared`                | ✅ Done — [#14](https://github.com/thai-nm/bahoth2nd/pull/14) |
 | Board renderer: tiles, doors, pan/zoom, floor tabs      | ✅ Done — [#15](https://github.com/thai-nm/bahoth2nd/pull/15) |
 | `movement.ts`: adjacency, rotation, links, no-backtrack | ✅ Done — [#16](https://github.com/thai-nm/bahoth2nd/pull/16) |
-| Wire the board into the game screen                     | ✅ Done — this PR                                             |
-| Discovery: tile draw, rotation prompt, placement        | ⬜ Not started                                                |
-| `PendingPrompt` lifecycle and timeout defaults          | ⬜ Not started                                                |
+| Wire the board into the game screen                     | ✅ Done — [#17](https://github.com/thai-nm/bahoth2nd/pull/17) |
+| Discovery: tile draw, rotation prompt, placement        | ✅ Done — this PR                                             |
+| `PendingPrompt` lifecycle and timeout defaults          | ⬜ Not started — the generic half; see below                  |
 | Event log panel driven by `GameEvent`s                  | ⬜ Not started                                                |
 
 The content item shipped 49 tiles (44 drawable plus the three starting rooms
@@ -200,6 +200,116 @@ four-room path from the upper landing down to the basement — which is
 `getReachable` spanning three floors and the per-floor filter both doing
 their jobs at once. The no-backtrack rule is visible on screen: the room you
 just left stops being highlighted.
+
+### Discovery
+
+The item the previous five were building toward: `MOVE_THROUGH { dir }` draws a
+tile, the seat chooses a rotation, and the room comes into existence
+(docs/05-engine.md#56, steps 1-5). The house is now explorable — every room in
+it arrives by someone walking through a doorway that had nothing behind it.
+
+Steps 6-9 of that worked example are deliberately absent. A discovered tile
+with a symbol draws no card and does not end movement, because the decks do not
+exist until M3; the seam is commented where it will go.
+
+**The tile deck lives in state**, shuffled from `content.deckTiles` at
+`START_GAME` with the in-state RNG, right after the turn-order shuffle so the
+order the two draw in is fixed and replay reproduces both. The draw is
+docs/02-rules-model.md#24's [RULING]: take the first tile in the deck that this
+floor allows, and shuffle the passed-over ones back.
+
+Four decisions worth recording:
+
+- **Rotation options are deduplicated by their effective doors.** A tile with
+  doors on all four sides has four "legal" rotations that are the same room.
+  Prompting for a choice with no effect is worse than not prompting — and the
+  dedupe is also what makes auto-apply (roadmap open question 7, now settled:
+  auto-apply) fire on exactly the symmetric tiles it should, rather than on
+  one-door tiles only.
+- **A plain draw does not burn a random number.** Only a draw that actually
+  passed something over touches the RNG. Advancing it on every discovery would
+  perturb every later roll for no reason, which is the kind of thing that is
+  invisible until a haunt roll is being argued about.
+- **A pending prompt offers `ROTATE_TILE`, not the generic `ANSWER`.**
+  `getLegalActions` used to return `ANSWER { answer: null }` for any prompt —
+  an action `reduce` rejects with `UNKNOWN_ACTION`. That is precisely what the
+  property test exists to catch, and it stayed green only because no prompt
+  could ever be raised. It now enumerates the seat's real rotation choices, and
+  returns `[]` for a prompt kind it cannot enumerate rather than one the
+  reducer will refuse.
+- **A prompt is the resume point.** `pending.payload` carries the drawn tile,
+  its target cell, the room being left, and the legal rotations — everything
+  `finishDiscovery` needs, so there is no continuation to reconstruct. Three
+  callers reach that one function: auto-apply, `ROTATE_TILE`, and default
+  resolution.
+
+**Default resolution, not prompt-dropping.** The tile leaves the deck the
+moment it is drawn, whether or not a prompt follows. So every path that could
+previously discard `pending` now resolves it on `defaultAnswer` instead —
+`tick`'s deadline branch, `tick`'s turn-expiry branch, and (see below)
+`concede` and `resolveRemovals`. Dropping a prompt would make content vanish:
+an explorer stuck mid-doorway and a tile that is nowhere. The generic half of
+the `PendingPrompt` item — server-set deadlines, `ANSWER`, defaults for kinds
+that do not exist yet — is still its own item; what could not wait was the hole
+that a prompt with no owner leaves behind.
+
+**Two bugs found in review, neither visible from a green build.**
+
+The first: `getOpenDoorways` asked "is a tile left that this floor allows?" by
+reading `state.tileDeck` — which `redactFor` empties. The client only ever
+holds a redacted snapshot and calls the same `getLegalActions`
+(docs/05-engine.md#57), so it would have received an empty answer forever and
+every doorway arrow would have been permanently dead. Caught by probing a real
+game rather than by reading:
+
+```
+1 at=ground:0,1 moves=3 open=["e","w"]     openRedacted=[]
+3 at=upper:0,0  moves=1 open=["n","e","w"] openRedacted=[]
+```
+
+The fix is not to un-redact the deck. The deck's **order** is hidden — that is
+what docs/06-networking.md#64's "Tile deck order — same treatment" means — but
+its **composition is public**: the tile list is public content, the board is
+public, and the deck is exactly "every drawable copy, minus what has been
+placed". So drawability is derived from content and the board, and agrees with
+the deck by construction. The test that guards it asserts the two legality
+answers match **and** that the set is non-empty, because a weaker version
+passes with both sides blank, which is how this got through in the first place.
+
+The second: **a prompt could outlive the seat that owns it.** If the prompted
+seat conceded, `pending` survived pointing at a seat that was now dead — and
+`getLegalActions` keys the prompt off `pending.seatId` alone, so a dead seat
+was still the only one who could answer. If it was voted out instead, worse:
+that function returns `[]` early for a removed seat, so _nobody_ could. Either
+way the table was stuck until the turn clock expired: up to ten minutes, with a
+drawn tile in limbo. **D5's exact shape** — a reachable state whose only escape
+is a clock. `concede` and `resolveRemovals` now resolve a prompt owned by the
+departing seat before it leaves, and invariant 7a asserts a pending prompt's
+seat is neither dead nor removed, so the stuck state is unreachable rather than
+merely unlikely. Both fixes were watched failing against that invariant, which
+is the point of adding it.
+
+**What the property test does and does not reach.** Its random walk finds
+discovery and the rotation prompt on its own, and both are now asserted in the
+reach test. It does _not_ reach either prompt-orphaning path: `CONCEDE` is never
+offered by `getLegalActions`, so the walk cannot issue it at all, and the
+removal-vote path turned up 0 times across the seeds the test actually uses.
+Those two stay unit tests. Padding the seed range until a rare path went green
+would have bought a flaky assertion instead of coverage.
+
+210 tests, twelve files.
+
+**Verified by driving a real game in a browser** — three seats, one browser plus
+two scripted websocket clients, since seat tokens are keyed by room code in
+`localStorage`. Both the choice prompt (three rotations) and auto-apply
+(one-door tile, no prompt) behave; other seats see the ghost tile and the "is
+placing the…" line with no controls; arrows on rooms you are not standing in
+stay dead; and a discovery on the upper floor drew a tile the upper floor
+allows. One note on method: the browser tool's synthetic pointer clicks did not
+register on the board's own buttons — which carry pan/drag pointer capture —
+and were driven with dispatched `MouseEvent`s instead. That is a harness quirk,
+not shipped behaviour, but it means the click path itself is verified slightly
+less directly than the rest.
 
 ---
 
@@ -484,6 +594,10 @@ rather than drift.
 | 11  | `TILE = 150`, not the 120 stated in 07-ui                                             | At 120 a room name lands near 8px once the symbol badge and door notches take their bites. Everything scales from the constant, so it stays cheap to revisit.                                                                                                                                        |
 | 12  | The room name renders **outside** the rotated frame, rather than counter-rotating     | Same result — upright text over a rotated tile — with one transform instead of two.                                                                                                                                                                                                                  |
 | 13  | `Colour` lives in `shared/ids.ts`, not derived from content's `ColourSchema`          | Domain enums already live there beside `Floor`/`Dir`/`Trait`. A client-local copy made the client the only package with an opinion about which colours exist; a content test now asserts the two never drift.                                                                                        |
+| 14  | Rotation choices are **deduplicated by effective doors** before the prompt is raised  | Four "legal" rotations of a four-door tile are the same room. A prompt with no consequence is worse than no prompt, and the dedupe is what makes roadmap question 7's auto-apply fire on symmetric tiles rather than one-door tiles only.                                                            |
+| 15  | Passed-over tiles reshuffle the **whole** remaining deck, not just themselves back in | The deck's order is hidden either way, so the two are the same information to every player. One line instead of ten. A draw that passed nothing over leaves the RNG untouched, so ordinary discoveries do not perturb later rolls.                                                                   |
+| 16  | A pending prompt offers `ROTATE_TILE`; the generic `ANSWER` is offered for nothing    | `getLegalActions` previously returned `ANSWER { answer: null }`, which `reduce` rejects — a legal action the reducer refuses, green only because no prompt could be raised. It now enumerates real choices, and offers nothing for a kind it cannot enumerate.                                       |
+| 17  | Deck **drawability** is derived from content + board, never read off `state.tileDeck` | The deck's order is redacted; its composition is not, and cannot be — content and the board are both public. Deriving it is what lets one legality function answer identically on the server and on a client that holds only a redacted snapshot.                                                    |
 
 ---
 
@@ -515,11 +629,12 @@ Not bugs — real properties of the design that were not obvious when planning.
 
 In order:
 
-1. **Discovery**: tile draw, the rotation prompt, and placement — the next
-   engine PR on top of `movement.ts`. Once it lands, doorway arrows in
-   `Board` stop being dead: `Game.tsx` will pass `onMoveThrough`, which it
-   deliberately does not yet.
-2. **`PendingPrompt` lifecycle and timeout defaults.**
+1. **`PendingPrompt` lifecycle, the generic half.** Server-set deadlines, the
+   `ANSWER` action, and defaults for the prompt kinds that do not exist yet.
+   Discovery built the suspend/resume mechanism and one kind on top of it;
+   what is left is making it general before M3 leans on it hard.
+2. **Event log panel driven by `GameEvent`s** — the last M2 item. `describe()`
+   still prints seat ids rather than names, which is that item's job.
 3. **Confirm the turn-timer defaults with a real playtest** (roadmap open
    question 2). Ten minutes and ninety seconds are still guesses; they are now
    at least guesses that something reads.
@@ -533,7 +648,7 @@ Rough, for trend only.
 
 |                     | M0                    | M1                    | M2 (so far)           |
 | ------------------- | --------------------- | --------------------- | --------------------- |
-| Tests               | 49                    | 88                    | 180                   |
+| Tests               | 49                    | 88                    | 210                   |
 | Packages            | 5                     | 5                     | 5                     |
 | Haunts implemented  | 0 / 50                | 0 / 50                | 0 / 50                |
 | Room tiles authored | 0 / 44                | 0 / 44                | 44 / 44 (placeholder) |

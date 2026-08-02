@@ -12,7 +12,8 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '../store.js';
 import { getLegalActions, getReachable } from '@bahoth/engine';
-import type { Floor } from '@bahoth/shared';
+import { isRotateTilePayload } from '@bahoth/shared';
+import type { Floor, RotateTilePayload, Rotation } from '@bahoth/shared';
 import { Board } from '../board/Board.js';
 import { FloorTabs } from '../board/FloorTabs.js';
 import { floorOf, pawnsFromState } from '../board/pawns.js';
@@ -40,6 +41,19 @@ function useRemaining(deadline: number | null): number | null {
 function formatRemaining(ms: number): string {
   const total = Math.ceil(ms / 1000);
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+}
+
+/**
+ * The rotation the OTHER seat's ghost previews, since only the prompted seat
+ * gets to pick — everyone else sees `defaultAnswer`, the same rotation
+ * `resolvePromptWithDefault` (packages/engine/src/reduce.ts) would apply if
+ * nobody answers in time.
+ */
+function defaultRotation(payload: RotateTilePayload, defaultAnswer: unknown): Rotation {
+  return typeof defaultAnswer === 'number' &&
+    payload.legalRotations.includes(defaultAnswer as Rotation)
+    ? (defaultAnswer as Rotation)
+    : payload.legalRotations[0]!;
 }
 
 export function Game() {
@@ -71,6 +85,38 @@ export function Game() {
     if (myFloor) setFloor(myFloor);
   }, [myFloor]);
 
+  // The rotate_tile prompt (docs/07-ui.md#73, #74 "Pending prompts"). Narrow
+  // once here rather than at every use site below. `state.pending` carries
+  // `payload: unknown` by design (docs/04-data-model.md#pendingprompt) — the
+  // type guard from shared is the only way either side may trust its shape.
+  const pendingPayload =
+    state?.pending?.kind === 'rotate_tile' && isRotateTilePayload(state.pending.payload)
+      ? state.pending.payload
+      : null;
+  const isMyPrompt = pendingPayload !== null && state?.pending?.seatId === seatId;
+
+  // The previewed rotation while I own the prompt: transient UI state seeded
+  // to the prompt's own default (docs/07-ui.md#77 allows this — it is not
+  // game state, `ROTATE_TILE` is what makes a choice real). Reset whenever
+  // the prompt itself changes identity, not on every render.
+  const [previewRotation, setPreviewRotation] = useState<Rotation | null>(null);
+  const pendingId = state?.pending?.id ?? null;
+  useEffect(() => {
+    if (!pendingPayload) {
+      setPreviewRotation(null);
+      return;
+    }
+    const def = state?.pending?.defaultAnswer;
+    const seeded =
+      typeof def === 'number' && pendingPayload.legalRotations.includes(def as Rotation)
+        ? (def as Rotation)
+        : pendingPayload.legalRotations[0]!;
+    setPreviewRotation(seeded);
+    // Keyed off the prompt's own id, not `pendingPayload` — that object is
+    // rebuilt fresh from `state` every render, so depending on it would reset
+    // the preview on every keystroke of rotating instead of once per prompt.
+  }, [pendingId]);
+
   if (!state || !content || !seatId) return <div className="boot">Loading…</div>;
 
   const legal = getLegalActions(state, seatId, content);
@@ -85,6 +131,19 @@ export function Game() {
 
   const { byFloor } = pawnsFromState(state, content, seatId);
 
+  // A doorway is only live if getLegalActions actually offers it — never a
+  // second local legality check (docs/05-engine.md#57). During any pending
+  // prompt `legal` holds only ROTATE_TILE entries (or nothing, for every
+  // other seat), so this is naturally empty then, with no separate guard.
+  const throughDirs = legal.filter((a) => a.t === 'MOVE_THROUGH').map((a) => a.dir);
+
+  // While a rotate_tile prompt is outstanding, the board is forced to the
+  // floor the discovery is happening on (docs/07-ui.md#73) — the player must
+  // see the ghost tile they (or someone else) is about to place, regardless
+  // of which tab they last clicked. `floor` (the tab state) is left alone so
+  // it resumes exactly where the player was once the prompt resolves.
+  const displayFloor = pendingPayload ? pendingPayload.floor : floor;
+
   // The engine's answer, never a second local "can I move there?" check
   // (docs/05-engine.md#57). It already returns [] for anything that is not
   // this seat's live turn, so the highlight switches itself off with no
@@ -94,8 +153,33 @@ export function Game() {
   // on another floor, which reads as the engine being wrong rather than as
   // "look at the other tab".
   const reachableHere = getReachable(state, seatId, content).filter(
-    (id) => floorOf(state.board, id) === floor,
+    (id) => floorOf(state.board, id) === displayFloor,
   );
+
+  const promptTileName = pendingPayload
+    ? (content.tilesById[pendingPayload.tileId]?.name ?? pendingPayload.tileId)
+    : null;
+  const promptSeatName = state.pending
+    ? (seats.find((s) => s.seatId === state.pending!.seatId)?.name ??
+      state.pending.seatId)
+    : null;
+  const ghost = pendingPayload
+    ? {
+        tileId: pendingPayload.tileId,
+        x: pendingPayload.x,
+        y: pendingPayload.y,
+        rotation: isMyPrompt
+          ? (previewRotation ?? pendingPayload.legalRotations[0]!)
+          : defaultRotation(pendingPayload, state.pending?.defaultAnswer),
+      }
+    : undefined;
+
+  const rotateStep = (delta: number) => {
+    if (!pendingPayload || previewRotation === null) return;
+    const opts = pendingPayload.legalRotations;
+    const idx = opts.indexOf(previewRotation);
+    setPreviewRotation(opts[(idx + delta + opts.length) % opts.length]!);
+  };
 
   // Nobody should lose a turn to a clock they didn't know existed, and nobody
   // needs a ten-minute countdown in their face either: show it in the last
@@ -195,6 +279,16 @@ export function Game() {
             <button
               type="button"
               className="btn btn--ghost"
+              // Deliberately NOT gated on `state.pending`. Conceding is a
+              // player's way out of a room they no longer want to be in, and
+              // a prompt they cannot answer — someone else's — is exactly a
+              // moment they might want it. The engine resolves a prompt owned
+              // by the conceding seat on its default answer (`concede` in
+              // packages/engine/src/reduce.ts), so leaving mid-discovery
+              // cannot strand the drawn tile. Disabling the button here would
+              // be a second, client-side legality opinion, which
+              // docs/05-engine.md#57 forbids. `pending` below is the local
+              // in-flight-action flag, unrelated to `state.pending`.
               disabled={pending}
               onClick={() => send({ t: 'CONCEDE', seat: seatId })}
             >
@@ -208,23 +302,78 @@ export function Game() {
         </section>
 
         <section className="panel game__board">
-          <FloorTabs active={floor} onSelect={setFloor} pawnsByFloor={byFloor} />
+          {pendingPayload && (
+            <div className="panel rotate-prompt">
+              {isMyPrompt ? (
+                <>
+                  <h3>Placing: {promptTileName}</h3>
+                  <div className="actions">
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={pendingPayload.legalRotations.length < 2}
+                      onClick={() => rotateStep(-1)}
+                    >
+                      Rotate left
+                    </button>
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={pendingPayload.legalRotations.length < 2}
+                      onClick={() => rotateStep(1)}
+                    >
+                      Rotate right
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn--primary"
+                      disabled={previewRotation === null}
+                      onClick={() =>
+                        previewRotation !== null &&
+                        send({
+                          t: 'ROTATE_TILE',
+                          seat: seatId,
+                          rotation: previewRotation,
+                        })
+                      }
+                    >
+                      Place
+                    </button>
+                  </div>
+                </>
+              ) : (
+                // docs/07-ui.md#73: "every other player sees 'Ox is placing
+                // the Ballroom…'" — no controls, since ROTATE_TILE is not
+                // this seat's action to take (getLegalActions returns [] for
+                // everyone but the prompted seat while this is pending).
+                <p>
+                  {promptSeatName} is placing the {promptTileName}…
+                </p>
+              )}
+            </div>
+          )}
+          <FloorTabs active={displayFloor} onSelect={setFloor} pawnsByFloor={byFloor} />
           <Board
             board={state.board}
             content={content}
-            floor={floor}
-            pawns={byFloor[floor]}
+            floor={displayFloor}
+            pawns={byFloor[displayFloor]}
             reachable={reachableHere}
             onMoveTo={
               pending
                 ? undefined
                 : (placedId) => send({ t: 'MOVE', seat: seatId, to: placedId })
             }
-            // Discovery (MOVE_THROUGH) is not implemented in the engine yet —
-            // it is still UNKNOWN_ACTION there. Not passing a handler is what
-            // keeps every doorway arrow dead: `Board` dims and disables them
-            // whenever `onMoveThrough` is undefined, so this is the whole
-            // fix, not a stopgap needing a follow-up.
+            moveThrough={
+              pending || myLocation === null
+                ? undefined
+                : {
+                    from: myLocation,
+                    dirs: throughDirs,
+                    onMove: (dir) => send({ t: 'MOVE_THROUGH', seat: seatId, dir }),
+                  }
+            }
+            ghost={ghost}
           />
         </section>
 

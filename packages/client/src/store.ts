@@ -180,9 +180,13 @@ function handle(msg: ServerMessage, set: Set, get: Get): void {
       break;
     }
 
-    case 'events':
-      set((s) => ({ log: [...s.log, ...msg.events.map(toLogLine)].slice(-200) }));
+    case 'events': {
+      const { content } = get();
+      set((s) => ({
+        log: [...s.log, ...msg.events.map((e) => toLogLine(e, content))].slice(-200),
+      }));
       break;
+    }
 
     case 'ack':
       set({ pendingSeq: null });
@@ -215,11 +219,11 @@ function seatName(store: Store, seatId: SeatId): string {
 }
 
 /** Turn an event into a log line. The real narration layer arrives with M2. */
-function toLogLine(e: GameEvent): LogLine {
-  return { id: logId++, text: describe(e) };
+function toLogLine(e: GameEvent, content: Content | null): LogLine {
+  return { id: logId++, text: describe(e, content) };
 }
 
-function describe(e: GameEvent): string {
+function describe(e: GameEvent, content: Content | null): string {
   switch (e.t) {
     case 'joined':
       return `${e.name} joined`;
@@ -244,7 +248,11 @@ function describe(e: GameEvent): string {
     case 'moved':
       return `${e.seat} moved to ${e.to}`;
     case 'discovered':
-      return `${e.seat} discovered ${e.placed.tileId}`;
+      // The player-facing log should read like a room, not a content id —
+      // resolve the name from content (the store always has it once a game
+      // is running). Seat ids stay ids: naming seats is the event-log
+      // panel's own item, not this one's (see the `moved` case above).
+      return `${e.seat} discovered ${content?.tilesById[e.placed.tileId]?.name ?? e.placed.tileId}`;
     case 'game_over':
       return `Game over: ${e.result.reason}`;
     case 'log':

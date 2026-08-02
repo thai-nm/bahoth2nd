@@ -23,12 +23,14 @@ import type {
   PlacedTile,
   Rotation,
 } from '@bahoth/shared';
-import { FLOORS, cellKey, placedIdFor } from '@bahoth/shared';
+import { FLOORS, ROTATIONS, cellKey, placedIdFor } from '@bahoth/shared';
+import type { Dir } from '@bahoth/shared';
 import type { Content } from '@bahoth/content';
 import { fixtureContent } from '@bahoth/content';
 import { Board } from '../board/Board.js';
 import type { Pawn } from '../board/Board.js';
 import { FloorTabs } from '../board/FloorTabs.js';
+import { openDoorways, tileViewsForFloor } from '../board/layout.js';
 
 /**
  * A hand-placed tile. Its PlacedId is minted the same way the engine mints
@@ -142,6 +144,24 @@ const PREVIEW_REACHABLE: Record<Floor, readonly string[]> = {
   upper: ['tile.linen_press'],
 };
 
+/**
+ * A stand-in `rotate_tile` prompt (docs/07-ui.md#73: "if a rotation prompt
+ * is pending, it renders semi-transparent with rotate left/right buttons and
+ * a confirm"). This screen has no engine and no `PendingPrompt`, so all four
+ * rotations are offered rather than a real `legalRotations` — the point here
+ * is judging the ghost tile and the panel's look, not discovery legality,
+ * which `discovery.test.ts` and `reduce.test.ts` (packages/engine) already
+ * cover. `x`/`y` sit one cell west of `tile.sunken_cistern`'s open west door
+ * (see EXTRA_PLACEMENTS above), so the ghost lands somewhere already visible
+ * on the basement floor rather than floating off in empty space.
+ */
+const DEMO_PROMPT = {
+  tileId: 'tile.slate_undercroft',
+  floor: 'basement' as Floor,
+  x: -2,
+  y: 0,
+};
+
 /** The placement for a given tile id, or undefined if this preview never placed one. */
 function placementFor(board: BoardState, tileId: string): PlacedTile | undefined {
   return Object.values(board.placed).find((p) => p.tileId === tileId);
@@ -151,6 +171,11 @@ export function BoardPreview() {
   const content = fixtureContent();
   const [board] = useState(() => buildPreviewBoard(content));
   const [floor, setFloor] = useState<Floor>('ground');
+  // Transient UI state for the rotate_tile demo below — same allowance
+  // docs/07-ui.md#77 gives Game.tsx's own preview rotation.
+  const [showPrompt, setShowPrompt] = useState(false);
+  const [previewRotation, setPreviewRotation] = useState<Rotation>(0);
+  const displayFloor = showPrompt ? DEMO_PROMPT.floor : floor;
 
   const pawnsByFloor = useMemo(() => {
     const byFloor: Record<Floor, Pawn[]> = { basement: [], ground: [], upper: [] };
@@ -178,21 +203,97 @@ export function BoardPreview() {
     return byFloor;
   }, [board]);
 
+  // A live doorway arrow to demo, on whichever floor is showing — the first
+  // one `openDoorways` finds. Real liveness still comes from the same
+  // function `Board`'s caller (Game.tsx) uses; this preview has no
+  // getLegalActions to ask, so "the first open doorway" stands in for it.
+  const demoMoveThrough = useMemo(() => {
+    const views = tileViewsForFloor(board, content, displayFloor);
+    const first = openDoorways(views)[0];
+    if (!first) return undefined;
+    return {
+      from: first.placedId,
+      dirs: [first.dir] as readonly Dir[],
+      onMove: (dir: Dir) => console.log('MOVE_THROUGH ->', first.placedId, dir),
+    };
+  }, [board, content, displayFloor]);
+
   return (
     <main className="screen">
       <h1 className="title title--sm">Board preview (dev only)</h1>
       <p className="subtitle">
         Hand-built board, no server, no engine. Reachability and move handlers are stubs.
       </p>
-      <FloorTabs active={floor} onSelect={setFloor} pawnsByFloor={pawnsByFloor} />
+      <button
+        type="button"
+        className="board__btn"
+        onClick={() => {
+          setPreviewRotation(0);
+          setShowPrompt((v) => !v);
+        }}
+      >
+        {showPrompt ? 'Hide' : 'Show'} rotate_tile prompt demo
+      </button>
+      {showPrompt && (
+        <div className="panel rotate-prompt">
+          <h3>
+            Placing: {content.tilesById[DEMO_PROMPT.tileId]?.name ?? DEMO_PROMPT.tileId}
+          </h3>
+          <div className="actions">
+            <button
+              type="button"
+              className="btn"
+              onClick={() =>
+                setPreviewRotation(
+                  (r) =>
+                    ROTATIONS[
+                      (ROTATIONS.indexOf(r) + ROTATIONS.length - 1) % ROTATIONS.length
+                    ]!,
+                )
+              }
+            >
+              Rotate left
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={() =>
+                setPreviewRotation(
+                  (r) => ROTATIONS[(ROTATIONS.indexOf(r) + 1) % ROTATIONS.length]!,
+                )
+              }
+            >
+              Rotate right
+            </button>
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={() => setShowPrompt(false)}
+            >
+              Place
+            </button>
+          </div>
+        </div>
+      )}
+      <FloorTabs active={displayFloor} onSelect={setFloor} pawnsByFloor={pawnsByFloor} />
       <Board
         board={board}
         content={content}
-        floor={floor}
-        pawns={pawnsByFloor[floor]}
-        reachable={reachableByFloor[floor]}
+        floor={displayFloor}
+        pawns={pawnsByFloor[displayFloor]}
+        reachable={reachableByFloor[displayFloor]}
         onMoveTo={(placedId) => console.log('MOVE ->', placedId)}
-        onMoveThrough={(placedId, dir) => console.log('MOVE_THROUGH ->', placedId, dir)}
+        moveThrough={showPrompt ? undefined : demoMoveThrough}
+        ghost={
+          showPrompt
+            ? {
+                tileId: DEMO_PROMPT.tileId,
+                x: DEMO_PROMPT.x,
+                y: DEMO_PROMPT.y,
+                rotation: previewRotation,
+              }
+            : undefined
+        }
       />
     </main>
   );

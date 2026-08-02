@@ -41,6 +41,10 @@ export function redactFor(state: GameState, seat: SeatId | null): GameState {
   return {
     ...rest,
     decks,
+    // Same treatment as the card draw piles (docs/06-networking.md#64: "Tile
+    // deck order — same treatment"): identities hidden, count public.
+    tileDeck: [],
+    tileDeckCount: state.tileDeck.length,
     haunt: redactHaunt(state, seat),
   };
 }

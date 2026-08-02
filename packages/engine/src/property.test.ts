@@ -21,6 +21,8 @@ const content = fixtureContent();
 interface Walk {
   state: GameState;
   log: GameAction[];
+  /** Whether a `rotate_tile` prompt was ever raised during the walk. */
+  sawRotatePrompt: boolean;
 }
 
 /** Fixed epoch for the walk's fake clock. Any value; it only has to advance. */
@@ -41,6 +43,7 @@ function randomWalk(seed: number, steps: number): Walk {
   let state = createInitialState({ seed, content });
   const log: GameAction[] = [];
   let clock = WALK_T0;
+  let sawRotatePrompt = false;
 
   const names = ['Ana', 'Ben', 'Cal', 'Dot', 'Eli', 'Fay'];
   const [playerCount, r0] = nextInt(rng, 4); // 0..3 -> 3..6 players
@@ -101,6 +104,7 @@ function randomWalk(seed: number, steps: number): Walk {
     }
     state = res.state;
     log.push(action);
+    if (state.pending?.kind === 'rotate_tile') sawRotatePrompt = true;
 
     const problems = checkInvariants(state);
     if (problems.length > 0) {
@@ -110,7 +114,7 @@ function randomWalk(seed: number, steps: number): Walk {
     }
   }
 
-  return { state, log };
+  return { state, log, sawRotatePrompt };
 }
 
 describe('property: invariants always hold', () => {
@@ -129,19 +133,33 @@ describe('property: invariants always hold', () => {
     let armedClock = 0;
     let votes = 0;
     let removals = 0;
+    // M2: at least one walk must reach a discovery (a placed tile that was
+    // not part of the starting layout) and at least one must raise a
+    // rotate_tile prompt — MOVE_THROUGH/ROTATE_TILE are now offered by
+    // getLegalActions, and this is the same reach-check discipline applied
+    // to them.
+    let discovered = 0;
+    let rotatePrompted = 0;
+    const startingTileIds = new Set(content.house.layout.map((t) => t.tileId));
 
     for (let seed = 1; seed <= 25; seed++) {
-      const { state, log } = randomWalk(seed, 500);
+      const { state, log, sawRotatePrompt } = randomWalk(seed, 500);
       if (Object.values(state.players).some((p) => !p.connected)) disconnected++;
       if (state.turnDeadline !== null) armedClock++;
       if (log.some((a) => a.t === 'VOTE_REMOVE')) votes++;
       if (Object.values(state.players).some((p) => p.removed)) removals++;
+      if (Object.values(state.board.placed).some((t) => !startingTileIds.has(t.tileId))) {
+        discovered++;
+      }
+      if (sawRotatePrompt) rotatePrompted++;
     }
 
     expect(disconnected, 'no walk produced a disconnected seat').toBeGreaterThan(0);
     expect(armedClock, 'no walk armed the turn clock').toBeGreaterThan(0);
     expect(votes, 'no walk cast a removal vote').toBeGreaterThan(0);
     expect(removals, 'no walk carried a removal through').toBeGreaterThan(0);
+    expect(discovered, 'no walk placed a tile it did not start with').toBeGreaterThan(0);
+    expect(rotatePrompted, 'no walk raised a rotate_tile prompt').toBeGreaterThan(0);
   });
 });
 

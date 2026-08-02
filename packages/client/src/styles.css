@@ -446,6 +446,21 @@ h2 {
   gap: 8px;
 }
 
+/* The rotate_tile prompt (docs/07-ui.md#73-board-rendering, "Discovery
+   flow"): sits above the floor tabs so it reads as blocking the board below
+   it, reusing .panel/.actions rather than inventing new chrome for what is
+   still a small, occasional interaction. */
+.rotate-prompt {
+  margin-bottom: 12px;
+}
+.rotate-prompt h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+.rotate-prompt p {
+  margin: 0;
+}
+
 .hint {
   color: var(--muted);
   font-size: 12px;

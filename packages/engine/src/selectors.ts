@@ -10,6 +10,7 @@
 import {
   MAX_PLAYERS,
   MIN_PLAYERS,
+  isRotateTilePayload,
   type CharId,
   type GameAction,
   type GameState,
@@ -18,6 +19,7 @@ import {
   type Trait,
 } from '@bahoth/shared';
 import type { Content } from '@bahoth/content';
+import { getOpenDoorways } from './discovery.js';
 import { getReachable } from './movement.js';
 
 /**
@@ -117,9 +119,21 @@ export function getLegalActions(
 
   // A pending prompt blocks everything except the seat that must answer it.
   if (state.pending) {
-    return state.pending.seatId === seat
-      ? [{ t: 'ANSWER', seat, promptId: state.pending.id, answer: null }]
-      : [];
+    if (state.pending.seatId !== seat) return [];
+    if (
+      state.pending.kind === 'rotate_tile' &&
+      isRotateTilePayload(state.pending.payload)
+    ) {
+      return state.pending.payload.legalRotations.map((rotation) => ({
+        t: 'ROTATE_TILE' as const,
+        seat,
+        rotation,
+      }));
+    }
+    // No other prompt kind is raised yet; a prompt this function cannot
+    // enumerate offers nothing rather than an ANSWER `reduce` would reject
+    // (docs/05-engine.md#57: getLegalActions and reduce must never disagree).
+    return [];
   }
 
   const actions: GameAction[] = [];
@@ -158,6 +172,9 @@ export function getLegalActions(
         // exactly (D-h).
         for (const to of getReachable(state, seat, content)) {
           actions.push({ t: 'MOVE', seat, to });
+        }
+        for (const dir of getOpenDoorways(state, seat, content)) {
+          actions.push({ t: 'MOVE_THROUGH', seat, dir });
         }
         actions.push({ t: 'END_TURN', seat });
       }

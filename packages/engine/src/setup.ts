@@ -41,6 +41,10 @@ export function createInitialState({
       placed: {},
       index: { basement: {}, ground: {}, upper: {} },
     },
+    // Built at START_GAME, not here — same reason the board is: content
+    // could not be shuffled before the game exists, and nothing reads it in
+    // the lobby.
+    tileDeck: [],
     decks: {
       item: { draw: [], discard: [], inPlay: [] },
       event: { draw: [], discard: [], inPlay: [] },

@@ -6,7 +6,16 @@
  * dead server mid-game is worse.
  */
 
-import { DECK_KINDS, FLOORS, TRAITS, placedIdFor, type GameState } from '@bahoth/shared';
+import {
+  DECK_KINDS,
+  FLOORS,
+  TRAITS,
+  cellKey,
+  isRotateTilePayload,
+  placedIdFor,
+  type GameState,
+  type Rotation,
+} from '@bahoth/shared';
 
 export class InvariantError extends Error {
   constructor(
@@ -160,9 +169,44 @@ export function checkInvariants(state: GameState): string[] {
     }
   }
 
-  // 7. A pending prompt targets a real seat.
+  // 7. A pending prompt targets a real seat, and a rotate_tile prompt's
+  //    resume state is coherent enough to finish the discovery it promised.
   if (state.pending && !state.players[state.pending.seatId]) {
     problems.push(`pending prompt targets unknown seat ${state.pending.seatId}`);
+  }
+  // 7a. A pending prompt's seat is still around to answer it. `concede` and
+  //     `resolveRemovals` both resolve a seat's own prompt on its default
+  //     before the seat leaves (D5's shape otherwise: a reachable state
+  //     whose only escape is a clock, because a dead seat is still the only
+  //     one getLegalActions lets answer, and a removed seat can answer
+  //     nothing at all). This is the check that makes that unreachable
+  //     rather than merely unlikely.
+  const promptOwner = state.pending && state.players[state.pending.seatId];
+  if (promptOwner && (promptOwner.isDead || promptOwner.removed)) {
+    problems.push(
+      `pending prompt's seat ${state.pending!.seatId} is dead or removed and cannot answer it`,
+    );
+  }
+  if (state.pending?.kind === 'rotate_tile') {
+    const { payload, defaultAnswer } = state.pending;
+    if (!isRotateTilePayload(payload)) {
+      problems.push('rotate_tile prompt payload is not a RotateTilePayload');
+    } else {
+      if (payload.legalRotations.length === 0) {
+        problems.push('rotate_tile prompt has no legal rotations');
+      }
+      if (!payload.legalRotations.includes(defaultAnswer as Rotation)) {
+        problems.push('rotate_tile prompt defaultAnswer is not among its legalRotations');
+      }
+      if (state.board.index[payload.floor][cellKey(payload.x, payload.y)]) {
+        problems.push(
+          `rotate_tile prompt targets ${payload.floor}:${payload.x},${payload.y}, which is already built`,
+        );
+      }
+      if (!state.board.placed[payload.from]) {
+        problems.push(`rotate_tile prompt's "from" ${payload.from} is not a placed tile`);
+      }
+    }
   }
 
   // 8. movesLeft is a non-negative integer. Deliberately not "only the active

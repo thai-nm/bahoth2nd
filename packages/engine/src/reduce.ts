@@ -13,21 +13,31 @@
 import {
   MAX_PLAYERS,
   MIN_PLAYERS,
+  OPPOSITE,
   TRAITS,
   cellKey,
+  isRotateTilePayload,
+  neighbourCell,
   placedIdFor,
+  rotateDoors,
   type BoardState,
+  type Dir,
   type GameAction,
   type GameEvent,
   type GameState,
+  type PendingPrompt,
   type PlacedId,
+  type PlacedTile,
   type PlayerState,
+  type Rotation,
+  type RotateTilePayload,
   type RuleError,
   type RuleErrorCode,
   type SeatId,
 } from '@bahoth/shared';
 import type { Character, Content } from '@bahoth/content';
 import { checkInvariants } from './invariants.js';
+import { drawTile, legalRotations } from './discovery.js';
 import {
   activePlayers,
   canStart,
@@ -114,10 +124,12 @@ function dispatch(state: GameState, action: GameAction, content: Content): Reduc
       return concede(state, action.seat, content);
     case 'MOVE':
       return move(state, action.seat, action.to, content);
+    case 'MOVE_THROUGH':
+      return moveThrough(state, action.seat, action.dir, content);
+    case 'ROTATE_TILE':
+      return rotateTile(state, action.seat, action.rotation, content);
 
     // Declared in the protocol, implemented in later milestones.
-    case 'MOVE_THROUGH':
-    case 'ROTATE_TILE':
     case 'USE_ITEM':
     case 'TRADE':
     case 'DROP':
@@ -271,10 +283,13 @@ function startGame(state: GameState, seat: SeatId, content: Content): ReduceResu
   if (!rng)
     return fail('INVARIANT_VIOLATION', 'Cannot start a game from a redacted state');
 
-  const [turnOrder, nextRng] = shuffle(
+  const [turnOrder, rngAfterOrder] = shuffle(
     rng,
     players.map((p) => p.seatId),
   );
+  // Turn order first, then the tile deck — the ordering is fixed so replay
+  // reproduces the same deck every time (docs/05-engine.md#54).
+  const [tileDeck, nextRng] = shuffle(rngAfterOrder, content.deckTiles);
 
   const board = placeStartingLayout(content);
   const startLayout = content.house.layout.find(
@@ -312,6 +327,7 @@ function startGame(state: GameState, seat: SeatId, content: Content): ReduceResu
     // sets the deadline.
     turnDeadline: null,
     board,
+    tileDeck,
   };
   // Only the first active seat gets a movement budget this turn (D-f);
   // everyone else keeps the movesLeft: 0 they were seeded with in makePlayer.
@@ -381,6 +397,206 @@ function move(
   }
 
   return { state: nextState, events };
+}
+
+/**
+ * `MOVE_THROUGH { dir }` — the other half of movement, alongside `MOVE`
+ * (docs/02-rules-model.md#24 step 3 and its [RULING] on the draw;
+ * docs/05-engine.md#56, steps 1-3 of the worked example). Draws a tile off
+ * the deck and either places it immediately, when only one rotation puts a
+ * door back on `dir` (docs/09-roadmap.md open question 7: auto-apply), or
+ * raises a `rotate_tile` prompt for the seat to choose among the rest.
+ *
+ * The tile is off the deck from the moment `drawTile` succeeds, whether or
+ * not a prompt follows — which is why every place that can otherwise drop
+ * `pending` (see `tick`, below) has to resolve a `rotate_tile` prompt rather
+ * than discard it. A dropped prompt would be a drawn tile that vanished.
+ */
+function moveThrough(
+  state: GameState,
+  seat: SeatId,
+  dir: Dir,
+  content: Content,
+): ReduceResult {
+  if (!['explore', 'haunt'].includes(state.phase)) {
+    return fail('WRONG_PHASE', `Cannot move during ${state.phase}`);
+  }
+  const player = state.players[seat];
+  if (!player) return fail('UNKNOWN_SEAT', `No such seat: ${seat}`);
+  if (state.activeSeat !== seat) return fail('NOT_YOUR_TURN', 'It is not your turn');
+  if (state.pending) return fail('PROMPT_PENDING', 'Answer the pending prompt first');
+  if (player.isDead || player.removed || player.location === null) {
+    return fail('ILLEGAL_MOVE', `${seat} cannot move`);
+  }
+  if (player.movesLeft <= 0) {
+    return fail('ILLEGAL_MOVE', `${seat} has no moves left`);
+  }
+
+  const location = state.board.placed[player.location];
+  const tileDef = location && content.tilesById[location.tileId];
+  if (!location || !tileDef) {
+    return fail('ILLEGAL_MOVE', `${seat} is standing on an unrecognised tile`);
+  }
+
+  const doors = rotateDoors(tileDef.doors, location.rotation);
+  if (!doors[dir]) {
+    return fail('ILLEGAL_MOVE', `No doorway ${dir} from ${location.id}`);
+  }
+
+  const [nx, ny] = neighbourCell(location.x, location.y, dir);
+  if (state.board.index[location.floor][cellKey(nx, ny)]) {
+    // This is exactly the client bug this check catches: the cell is already
+    // built, so the right action is MOVE, not MOVE_THROUGH.
+    return fail(
+      'ILLEGAL_MOVE',
+      `${cellKey(nx, ny)} on the ${location.floor} is already built — use MOVE instead`,
+    );
+  }
+
+  const rng = state.rng;
+  if (!rng) {
+    return fail('INVARIANT_VIOLATION', 'Cannot draw a tile from a redacted state');
+  }
+  const draw = drawTile(state.tileDeck, location.floor, content, rng);
+  if (!draw) {
+    return fail(
+      'ILLEGAL_MOVE',
+      `No room left that can be built on the ${location.floor}`,
+    );
+  }
+
+  // The tile is committed from here: it is off the deck in `withDraw`
+  // regardless of which path below actually places it.
+  const withDraw: GameState = { ...state, tileDeck: draw.deck, rng: draw.rng };
+  const drawnTileDef = content.tilesById[draw.tileId]!;
+  const rots = legalRotations(drawnTileDef, OPPOSITE[dir]);
+  const payload: RotateTilePayload = {
+    tileId: draw.tileId,
+    floor: location.floor,
+    x: nx,
+    y: ny,
+    from: location.id,
+    dir,
+    legalRotations: rots,
+  };
+
+  if (rots.length === 1) {
+    // No decision to make (open question 7: auto-apply).
+    return finishDiscovery(withDraw, seat, payload, rots[0]!, content);
+  }
+
+  const pending: PendingPrompt = {
+    id: `prompt_${state.version}`, // deterministic for replay; never a counter or random id
+    seatId: seat,
+    kind: 'rotate_tile',
+    payload,
+    deadline: null, // server-set deadlines are the next item, not this one
+    defaultAnswer: rots[0]!,
+  };
+
+  return {
+    state: { ...withDraw, pending },
+    events: [
+      // docs/07-ui.md#73 asks for exactly this line for the other players.
+      { t: 'log', text: `${player.name} is placing the ${drawnTileDef.name}…` },
+    ],
+  };
+}
+
+/**
+ * Land a drawn tile and step the explorer through the doorway. Shared by the
+ * auto-apply path in `moveThrough`, `ROTATE_TILE`, and default-answer
+ * resolution in `tick` (`resolvePromptWithDefault`) — three ways to reach the
+ * same finish line, one function that draws it.
+ *
+ * `content` is unused today but kept in the signature for the effects this
+ * seam will need: onEnter effects, the card draw and its `movesLeft = 0`, and
+ * the haunt roll are steps 6-8 of the worked example
+ * (docs/05-engine.md#56) and are explicitly out of scope for this PR — a
+ * discovered tile with a symbol draws nothing yet. That is M3's seam, not
+ * this one's.
+ */
+function finishDiscovery(
+  state: GameState,
+  seat: SeatId,
+  payload: RotateTilePayload,
+  rotation: Rotation,
+  _content: Content,
+): ReduceResult {
+  const id = placedIdFor(payload.floor, payload.x, payload.y);
+
+  // Guard the cell one more time. Nothing can occupy it between the prompt
+  // being raised and being answered today — a pending prompt blocks every
+  // other action — but that is a fact about today's rules, not a property of
+  // this function. Clear the prompt without double-placing if it ever does.
+  if (state.board.index[payload.floor][cellKey(payload.x, payload.y)]) {
+    return { state: { ...state, pending: null }, events: [] };
+  }
+
+  const placed: PlacedTile = {
+    id,
+    tileId: payload.tileId,
+    floor: payload.floor,
+    x: payload.x,
+    y: payload.y,
+    rotation,
+    discoveredBy: seat,
+    flags: {},
+  };
+
+  const board: BoardState = {
+    placed: { ...state.board.placed, [id]: placed },
+    index: {
+      ...state.board.index,
+      [payload.floor]: {
+        ...state.board.index[payload.floor],
+        [cellKey(payload.x, payload.y)]: id,
+      },
+    },
+  };
+
+  const player = state.players[seat]!;
+  const players = {
+    ...state.players,
+    [seat]: {
+      ...player,
+      location: id,
+      cameFrom: payload.from,
+      movesLeft: player.movesLeft - 1,
+    },
+  };
+
+  return {
+    state: { ...state, board, players, pending: null },
+    events: [
+      { t: 'discovered', seat, placed },
+      { t: 'moved', seat, from: payload.from, to: id },
+    ],
+  };
+}
+
+/**
+ * `ROTATE_TILE { rotation }`: the seat's answer to a `rotate_tile` prompt.
+ */
+function rotateTile(
+  state: GameState,
+  seat: SeatId,
+  rotation: Rotation,
+  content: Content,
+): ReduceResult {
+  const pending = state.pending;
+  if (!pending) return fail('PROMPT_PENDING', 'There is no prompt to answer');
+  if (pending.kind !== 'rotate_tile' || pending.seatId !== seat) {
+    return fail('PROMPT_MISMATCH', 'This is not your prompt to answer');
+  }
+  if (!isRotateTilePayload(pending.payload)) {
+    return fail('INVARIANT_VIOLATION', 'Malformed rotate_tile prompt payload');
+  }
+  if (!pending.payload.legalRotations.includes(rotation)) {
+    return fail('ILLEGAL_MOVE', `${rotation} does not put a door back on the entry`);
+  }
+
+  return finishDiscovery(state, seat, pending.payload, rotation, content);
 }
 
 function endTurn(state: GameState, seat: SeatId, content: Content): ReduceResult {
@@ -560,6 +776,23 @@ function resolveRemovals(state: GameState, now: number, content: Content): Reduc
     if (now - victim.disconnectedAt < next.timers.removeGraceMs) continue;
     if (voters.length < votesNeeded(next, target)) continue;
 
+    // If the seat about to be removed owns the pending prompt, resolve it on
+    // its default BEFORE the removal — while it is still a normal player, so
+    // `finishDiscovery` writes a coherent state (it expects a seat that is
+    // still in `turnOrder` and not yet `removed`). Left unresolved, the
+    // prompt becomes unanswerable the instant this seat is `removed`
+    // (`getLegalActions` returns `[]` early for a removed seat, full stop),
+    // and the tile it carries sits in limbo until the turn clock expires —
+    // D5's shape (docs/11-progress.md): a reachable state whose only escape
+    // is a clock. This PR is what makes a prompt reachable at all, so it is
+    // also what has to close this hole.
+    if (next.pending?.seatId === target) {
+      const resolved = resolvePromptWithDefault(next, content);
+      next = resolved.state;
+      events.push(...resolved.events);
+    }
+    const freshVictim = next.players[target]!;
+
     const removeVotes = { ...next.removeVotes };
     delete removeVotes[target];
 
@@ -576,7 +809,7 @@ function resolveRemovals(state: GameState, now: number, content: Content): Reduc
     next = {
       ...next,
       removeVotes,
-      players: { ...next.players, [target]: { ...victim, removed: true } },
+      players: { ...next.players, [target]: { ...freshVictim, removed: true } },
       turnOrder: next.turnOrder.filter((s) => s !== target),
     };
 
@@ -594,7 +827,7 @@ function resolveRemovals(state: GameState, now: number, content: Content): Reduc
 
     events.push({
       t: 'log',
-      text: `${victim.name} was removed by vote after leaving the game`,
+      text: `${freshVictim.name} was removed by vote after leaving the game`,
     });
   }
 
@@ -606,18 +839,34 @@ function concede(state: GameState, seat: SeatId, content: Content): ReduceResult
   if (!player) return fail('UNKNOWN_SEAT', `No such seat: ${seat}`);
   if (state.phase === 'game_over') return fail('GAME_OVER', 'The game is already over');
 
-  const remaining = Object.values(state.players).filter(
+  // If this seat owns the pending prompt, resolve it on its default BEFORE
+  // it leaves — see the matching comment in `resolveRemovals`, which reaches
+  // the same hole from the removal-vote side rather than concede.
+  let working = state;
+  const priorEvents: GameEvent[] = [];
+  if (working.pending?.seatId === seat) {
+    const resolved = resolvePromptWithDefault(working, content);
+    working = resolved.state;
+    priorEvents.push(...resolved.events);
+  }
+  // Re-read: resolving the prompt may have moved this seat (finishDiscovery
+  // updates location/cameFrom/movesLeft), and spreading the stale `player`
+  // below would silently revert that.
+  const playerNow = working.players[seat]!;
+
+  const remaining = Object.values(working.players).filter(
     (p) => p.seatId !== seat && !p.isDead,
   );
   if (remaining.length === 0) {
     return {
       state: {
-        ...state,
+        ...working,
         phase: 'game_over',
         result: { outcome: 'abandoned', winners: [], reason: 'Everyone conceded' },
       },
       events: [
-        { t: 'log', text: `${player.name} conceded` },
+        ...priorEvents,
+        { t: 'log', text: `${playerNow.name} conceded` },
         {
           t: 'game_over',
           result: { outcome: 'abandoned', winners: [], reason: 'Everyone conceded' },
@@ -627,25 +876,25 @@ function concede(state: GameState, seat: SeatId, content: Content): ReduceResult
   }
 
   const nextActive =
-    state.activeSeat === seat ? nextSeatInOrder(state, seat) : state.activeSeat;
+    working.activeSeat === seat ? nextSeatInOrder(working, seat) : working.activeSeat;
   const finalActive = nextActive === seat ? (remaining[0]?.seatId ?? null) : nextActive;
 
   let nextState: GameState = {
-    ...state,
-    players: { ...state.players, [seat]: { ...player, isDead: true } },
-    turnOrder: state.turnOrder.filter((s) => s !== seat),
+    ...working,
+    players: { ...working.players, [seat]: { ...playerNow, isDead: true } },
+    turnOrder: working.turnOrder.filter((s) => s !== seat),
     activeSeat: finalActive,
   };
   // Only re-arm the budget when the conceding seat was the one whose turn it
   // was (D-f) — a concede by someone else must not touch the active seat's
   // movesLeft mid-turn.
-  if (state.activeSeat === seat && finalActive) {
+  if (working.activeSeat === seat && finalActive) {
     nextState = beginTurnFor(nextState, finalActive, content);
   }
 
   return {
     state: nextState,
-    events: [{ t: 'log', text: `${player.name} conceded` }],
+    events: [...priorEvents, { t: 'log', text: `${playerNow.name} conceded` }],
   };
 }
 
@@ -664,6 +913,36 @@ function turnClockRuns(state: GameState): boolean {
 function turnBudget(state: GameState): number {
   const active = state.activeSeat === null ? undefined : state.players[state.activeSeat];
   return active?.connected === false ? state.timers.disconnectedMs : state.timers.turnMs;
+}
+
+/**
+ * Apply a prompt's own `defaultAnswer` and clear it. The prompt is always
+ * cleared, whichever branch runs — a prompt must never simply be able to
+ * outlive the thing it is blocking.
+ *
+ * For `rotate_tile` this finishes the discovery on `defaultAnswer` rather
+ * than dropping it: the tile is already off the deck the moment the prompt
+ * was raised (see `moveThrough`), so discarding `pending` here would make
+ * content vanish — an explorer stuck mid-doorway, a tile that is nowhere.
+ * No other prompt kind exists yet (the generic `PendingPrompt` lifecycle —
+ * server-set deadlines, `ANSWER`, defaults for kinds that do not exist yet —
+ * is the next milestone item), so every other kind just clears, as before.
+ */
+function resolvePromptWithDefault(state: GameState, content: Content): ReduceResult {
+  const pending = state.pending;
+  if (!pending) return { state, events: [] };
+
+  if (pending.kind === 'rotate_tile' && isRotateTilePayload(pending.payload)) {
+    return finishDiscovery(
+      state,
+      pending.seatId,
+      pending.payload,
+      pending.defaultAnswer as Rotation,
+      content,
+    );
+  }
+
+  return { state: { ...state, pending: null }, events: [] };
 }
 
 /**
@@ -702,9 +981,9 @@ function tick(state: GameState, now: number, content: Content): ReduceResult {
 
   const pending = next.pending;
   if (pending && pending.deadline !== null && now >= pending.deadline) {
-    // M2 gives each prompt kind a real default answer; until prompts exist,
-    // clearing is the whole behaviour.
-    next = { ...next, pending: null };
+    const resolved = resolvePromptWithDefault(next, content);
+    next = resolved.state;
+    events.push(...resolved.events);
     events.push({
       t: 'log',
       text: 'A decision timed out and was resolved automatically',
@@ -725,10 +1004,18 @@ function tick(state: GameState, now: number, content: Content): ReduceResult {
     return { state: next, events };
   }
 
-  // Expired. Clear any prompt still blocking the turn — an unanswered prompt
-  // must not be able to hold the room open past the deadline — and pass play on.
+  // Expired. Resolve any prompt still blocking the turn on its default answer
+  // — an unanswered prompt must not be able to hold the room open past the
+  // deadline — and pass play on. Resolving rather than dropping matters here
+  // exactly as it does above: the explorer walks through the door on the
+  // default rotation, THEN the turn ends, so the drawn tile is not a silent
+  // content leak.
   const seat = next.activeSeat!;
-  if (next.pending) next = { ...next, pending: null };
+  if (next.pending) {
+    const resolved = resolvePromptWithDefault(next, content);
+    next = resolved.state;
+    events.push(...resolved.events);
+  }
 
   const ended = endTurn(next, seat, content);
   if (ended.error) {
