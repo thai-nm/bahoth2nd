@@ -25,14 +25,14 @@ as verified truth.
 
 Each explorer has four traits: **Speed, Might, Sanity, Knowledge**.
 
-A trait is not a number — it is an **index into an 8-slot track** of printed
+A trait is not a number — it is an **index into a 9-slot track** of printed
 values. Slot 0 is the skull (death). The character card marks a starting index
 per trait. Effects move a trait _up or down the track by steps_, never by
 arithmetic on the value.
 
 ```
-Might track:  [ 💀, 2, 3, 3, 4, 5, 6, 8 ]
-                0   1  2  3  4  5  6  7
+Might track:  [ 💀, 2, 3, 3, 4, 5, 6, 7, 8 ]
+                0   1  2  3  4  5  6  7  8
 ```
 
 This is a common source of bugs in implementations that store the value

@@ -32,18 +32,18 @@ export const RotationSchema = z.union([
 export const EffectSchema = z.unknown();
 
 /**
- * Exactly 8 slots. Index 0 is the skull and is encoded as null — an explorer
+ * Exactly 9 slots. Index 0 is the skull and is encoded as null — an explorer
  * whose trait index reaches 0 is dead, so that slot never has a value.
  */
 export const TrackSchema = z
   .array(z.number().nullable())
-  .length(8)
+  .length(9)
   .refine((t) => t[0] === null, { message: 'Track index 0 must be null (the skull)' })
   .refine((t) => t.slice(1).every((v) => typeof v === 'number'), {
-    message: 'Track indices 1-7 must all be numbers',
+    message: 'Track indices 1-8 must all be numbers',
   });
 
-const StartIndexSchema = z.number().int().min(1).max(7);
+const StartIndexSchema = z.number().int().min(1).max(8);
 
 export const CharacterSchema = z.object({
   id: z.string().min(1),
