@@ -1,0 +1,48 @@
+# Local deployment: builds the image from the repo Dockerfile and runs it
+# against the same CONTENT_DIR/DATA_DIR bind mounts described in
+# docs/10-testing-and-ops.md#103-deployment. A production compose file, with
+# its own image source and volume strategy, is a separate file when needed —
+# this one is not it.
+services:
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - '8080:8080'
+    volumes:
+      # Real content, gitignored, mounted read-only — never baked into the
+      # image (docs/01-overview.md#intellectual-property-position). Absent is
+      # fine: the server falls back to placeholder fixtures.
+      - ./content:/app/content:ro
+      # Per-room action logs; this is what makes a container restart resume
+      # rooms instead of losing them.
+      - ./data:/app/data
+    environment:
+      # Same defaults as packages/server/src/config.ts. To override one for a
+      # local run, add a docker-compose.override.yml (Compose merges it
+      # automatically and it is gitignored) rather than editing this file.
+      PORT: 8080
+      CONTENT_DIR: /app/content
+      DATA_DIR: /app/data
+      ROOM_TTL_HOURS: 4
+      TURN_TIMEOUT_SECONDS: 600
+      DISCONNECT_TIMEOUT_SECONDS: 90
+      PROMPT_TIMEOUT_SECONDS: 60
+      TICK_INTERVAL_MS: 1000
+      REMOVE_GRACE_SECONDS: 600
+      RATE_LIMIT_PER_SECOND: 20
+      RATE_LIMIT_BURST: 50
+      LOG_LEVEL: info
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          'fetch("http://localhost:8080/healthz").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))',
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s

@@ -114,6 +114,25 @@ Content is a **mounted volume, not part of the image**, which keeps the
 published artifact free of the publisher's copyrighted text. See
 [01-overview.md](01-overview.md#intellectual-property-position).
 
+### Local
+
+`docker-compose.yml` builds the image from the repo `Dockerfile` and runs it
+with `./content` and `./data` bind-mounted to the paths above:
+
+```
+docker compose up --build
+```
+
+`./content` is optional — absent, the server logs a warning and falls back to
+the placeholder fixtures, same as running the server directly. The env vars
+above are set to the same defaults as `config.ts`; to change one for a local
+run, add a `docker-compose.override.yml` (Compose merges it automatically,
+and it is gitignored) rather than editing `docker-compose.yml` itself.
+
+A production compose file — different image source, different volume and
+secrets strategy — is a separate file, added when there is an actual
+production target to point it at. It is not this one.
+
 Health check at `GET /healthz` returning room count and uptime. A single
 1 vCPU / 512 MB instance comfortably handles dozens of concurrent rooms —
 this workload is idle almost all the time.
