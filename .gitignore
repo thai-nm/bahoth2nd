@@ -14,3 +14,6 @@ dist-types/
 
 .env
 .env.local
+
+# Local overrides for docker-compose.yml (Compose merges this automatically).
+docker-compose.override.yml
